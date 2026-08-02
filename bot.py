@@ -24,9 +24,6 @@ def register_telegram_commands():
     commands = [
         types.BotCommand("start", "Tampilkan menu utama & panduan"),
         types.BotCommand("new", "Reset & mulai sesi AI baru"),
-        types.BotCommand("model", "Ubah AI model (flash / pro / inherit)"),
-        types.BotCommand("effort", "Ubah reasoning effort (low / medium / high)"),
-        types.BotCommand("mode", "Ubah mode eksekusi (accept-edits / plan)"),
         types.BotCommand("workspace", "Lihat/ubah folder kerja di server"),
         types.BotCommand("goal", "Jalankan tugas khusus / long-running goal"),
         types.BotCommand("plan", "Aktifkan mode perencanaan (Plan Mode)"),
@@ -119,25 +116,17 @@ def keep_typing_alive(chat_id, stop_event):
 @bot.message_handler(commands=['start', 'help'])
 @check_auth
 def send_welcome(message):
-    st = agent_runner.get_settings(message.chat.id)
     help_text = (
-        "🧠 <b>Antigravity AI Agent Bot (CLI Synced)</b>\n\n"
+        "🧠 <b>Antigravity AI Agent Bot</b>\n\n"
         "Selamat datang! Kamu memiliki akses penuh ke Antigravity AI dari Telegram.\n\n"
-        "<b>Perintah Slash (Menu Instant):</b>\n"
+        "<b>Perintah Slash:</b>\n"
         "🆕 <code>/new</code> - Reset & mulai sesi obrolan baru\n"
-        "⚡ <code>/model [flash|pro|inherit]</code> - Ubah AI model (Default: <code>flash</code> untuk respon cepat!)\n"
-        "🔥 <code>/effort [low|medium|high]</code> - Ubah reasoning effort\n"
-        "⚙️ <code>/mode [accept-edits|plan]</code> - Ubah mode eksekusi agent\n"
         "🎯 <code>/goal <deskripsi></code> - Eksekusi tugas / goal khusus\n"
-        "📋 <code>/plan <deskripsi></code> - Aktifkan mode perencanaan dulu\n"
+        "📋 <code>/plan <deskripsi></code> - Aktifkan mode perencanaan (Plan Mode)\n"
         "📂 <code>/workspace [path]</code> - Ubah direktori kerja AI\n"
-        "📊 <code>/status</code> - Cek status RAM, Disk, Model & AI\n"
+        "📊 <code>/status</code> - Cek status RAM, Disk & AI\n"
         "❓ <code>/help</code> - Tampilkan bantuan ini\n\n"
-        f"<b>Status Saat Ini:</b>\n"
-        f"• Model: <code>{st['model']}</code> (Super Fast 🚀)\n"
-        f"• Effort: <code>{st['effort']}</code>\n"
-        f"• Mode: <code>{st['mode']}</code>\n"
-        f"• Workspace: <code>{current_workspace}</code>\n\n"
+        f"<b>Workspace Saat Ini:</b>\n<code>{current_workspace}</code>\n\n"
         "💡 <i>Ketik pesan atau instruksi kodingan apa saja. AI akan membaca, mengedit, dan mengeksekusi perintah di server!</i>"
     )
     reply_safe(message, help_text)
@@ -148,72 +137,6 @@ def send_welcome(message):
 def reset_conversation(message):
     agent_runner.reset_session(message.chat.id)
     reply_safe(message, "🔄 <b>Sesi obrolan Antigravity AI berhasil di-reset.</b>\nSiap untuk instruksi baru!")
-
-
-@bot.message_handler(commands=['model'])
-@check_auth
-def set_model(message):
-    st = agent_runner.get_settings(message.chat.id)
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        reply_safe(
-            message,
-            f"⚡ <b>AI Model saat ini:</b> <code>{st['model']}</code>\n\n"
-            f"Pilihan model:\n"
-            f"• <code>/model flash</code> (Sangat cepat, latensi rendah ⚡)\n"
-            f"• <code>/model pro</code> (Lebih cerdas untuk refactor kompleks 🧠)\n"
-            f"• <code>/model inherit</code> (Mengikuti default CLI)"
-        )
-        return
-
-    val = args[1].strip().lower()
-    if val in ['flash', 'pro', 'inherit']:
-        st['model'] = val
-        reply_safe(message, f"✅ AI Model diubah ke: <code>{val}</code>")
-    else:
-        reply_safe(message, "❌ Pilihan model tidak valid. Gunakan: <code>flash</code>, <code>pro</code>, atau <code>inherit</code>")
-
-
-@bot.message_handler(commands=['effort'])
-@check_auth
-def set_effort(message):
-    st = agent_runner.get_settings(message.chat.id)
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        reply_safe(
-            message,
-            f"🔥 <b>Reasoning Effort saat ini:</b> <code>{st['effort']}</code>\n\n"
-            f"Gunakan: <code>/effort low</code>, <code>/effort medium</code>, atau <code>/effort high</code>"
-        )
-        return
-
-    val = args[1].strip().lower()
-    if val in ['low', 'medium', 'high']:
-        st['effort'] = val
-        reply_safe(message, f"✅ Reasoning Effort diubah ke: <code>{val}</code>")
-    else:
-        reply_safe(message, "❌ Pilihan effort tidak valid. Gunakan: <code>low</code>, <code>medium</code>, atau <code>high</code>")
-
-
-@bot.message_handler(commands=['mode'])
-@check_auth
-def set_mode(message):
-    st = agent_runner.get_settings(message.chat.id)
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        reply_safe(
-            message,
-            f"⚙️ <b>Execution Mode saat ini:</b> <code>{st['mode']}</code>\n\n"
-            f"Gunakan: <code>/mode accept-edits</code> atau <code>/mode plan</code>"
-        )
-        return
-
-    val = args[1].strip().lower()
-    if val in ['accept-edits', 'plan']:
-        st['mode'] = val
-        reply_safe(message, f"✅ Execution Mode diubah ke: <code>{val}</code>")
-    else:
-        reply_safe(message, "❌ Mode tidak valid. Gunakan: <code>accept-edits</code> atau <code>plan</code>")
 
 
 @bot.message_handler(commands=['goal'])
@@ -261,7 +184,6 @@ def change_workspace(message):
 @check_auth
 def send_status(message):
     try:
-        st = agent_runner.get_settings(message.chat.id)
         cpu_usage = psutil.cpu_percent(interval=1)
         ram = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
@@ -271,8 +193,6 @@ def send_status(message):
             f"💻 <b>CPU Usage:</b> {cpu_usage}%\n"
             f"🧠 <b>RAM Usage:</b> {ram.percent}% ({ram.used // (1024**2)} MB / {ram.total // (1024**2)} MB)\n"
             f"💾 <b>Disk Usage:</b> {disk.percent}% ({disk.used // (1024**3)} GB / {disk.total // (1024**3)} GB)\n"
-            f"⚡ <b>AI Model:</b> <code>{st['model']}</code>\n"
-            f"🔥 <b>Effort:</b> <code>{st['effort']}</code> | <b>Mode:</b> <code>{st['mode']}</code>\n"
             f"🚀 <b>AGY Path:</b> <code>{config.AGY_PATH}</code>\n"
             f"📂 <b>Workspace:</b> <code>{current_workspace}</code>"
         )
@@ -293,7 +213,6 @@ def handle_text_prompt(message):
 def process_agent_prompt(message, prompt):
     status_msg = reply_safe(message, "⚡ <b>Antigravity AI sedang berpikir & bekerja di server...</b>")
 
-    # Start typing indicator loop in background
     stop_typing = threading.Event()
     typing_thread = threading.Thread(target=keep_typing_alive, args=(message.chat.id, stop_typing))
     typing_thread.start()
@@ -319,7 +238,7 @@ def process_agent_prompt(message, prompt):
 
 
 if __name__ == "__main__":
-    print("🚀 Starting Upgraded Antigravity AI Agent Telegram Bot...")
+    print("🚀 Starting Antigravity AI Agent Telegram Bot...")
     print(f"📂 Default Workspace Dir: {config.DEFAULT_WORKSPACE}")
     print(f"🔒 Allowed User IDs: {config.ALLOWED_USER_IDS}")
     print("🤖 Bot is polling for messages...")

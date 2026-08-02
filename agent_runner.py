@@ -4,17 +4,6 @@ import sys
 import config
 
 active_conversations = {}
-chat_settings = {}  # chat_id -> {'model': 'flash', 'effort': 'low', 'mode': 'accept-edits'}
-
-
-def get_settings(chat_id: int):
-    if chat_id not in chat_settings:
-        chat_settings[chat_id] = {
-            'model': 'flash',
-            'effort': 'low',
-            'mode': 'accept-edits'
-        }
-    return chat_settings[chat_id]
 
 
 def run_antigravity_agent(prompt: str, chat_id: int, workspace_dir: str = None) -> str:
@@ -25,18 +14,11 @@ def run_antigravity_agent(prompt: str, chat_id: int, workspace_dir: str = None) 
     cwd = workspace_dir or config.DEFAULT_WORKSPACE
     os.makedirs(cwd, exist_ok=True)
 
-    settings = get_settings(chat_id)
-
     cmd = [
         config.AGY_PATH,
         "-p", prompt,
-        "--dangerously-skip-permissions",
-        "--model", settings['model'],
-        "--effort", settings['effort']
+        "--dangerously-skip-permissions"
     ]
-
-    if settings.get('mode'):
-        cmd.extend(["--mode", settings['mode']])
 
     # If active conversation exists for this chat, append -c to continue
     if active_conversations.get(chat_id):
