@@ -132,8 +132,8 @@ def keep_typing_alive(chat_id, stop_event):
 @check_auth
 def send_welcome(message):
     help_text = (
-        "🧠 <b>Antigravity AI Agent Bot</b>\n\n"
-        "Selamat datang! Kamu memiliki akses penuh ke Antigravity AI dari Telegram.\n\n"
+        "🧠 <b>Antigravity AI Agent Bot (Real-Time Live Progress)</b>\n\n"
+        "Selamat datang! Kamu memiliki akses penuh ke Antigravity AI dari Telegram dengan update progress real-time.\n\n"
         "<b>Perintah Slash Keren:</b>\n"
         "📜 <code>/sessions</code> - Lihat & pilih riwayat sesi percakapan\n"
         "▶️ <code>/resume [instruksi]</code> - Pilih atau lanjutkan sesi percakapan terakhir\n"
@@ -318,8 +318,15 @@ def process_custom_agent_prompt(message, prompt, status_text, runner_func):
         typing_thread = threading.Thread(target=keep_typing_alive, args=(message.chat.id, stop_typing))
         typing_thread.start()
 
+        def update_progress(text):
+            if status_msg:
+                try:
+                    bot.edit_message_text(text, message.chat.id, status_msg.message_id, parse_mode="HTML")
+                except Exception:
+                    pass
+
         try:
-            response = runner_func(prompt, message.chat.id, current_workspace)
+            response = runner_func(prompt, message.chat.id, current_workspace, progress_callback=update_progress)
             
             stop_typing.set()
             typing_thread.join(timeout=1)
@@ -337,13 +344,12 @@ def process_custom_agent_prompt(message, prompt, status_text, runner_func):
             traceback.print_exc()
             reply_safe(message, f"❌ <b>Error memproses prompt:</b> {str(e)}")
 
-    # Execute AI task asynchronously in background thread so command handlers remain INSTANT!
     task_thread = threading.Thread(target=worker, daemon=True)
     task_thread.start()
 
 
 if __name__ == "__main__":
-    print("🚀 Starting Non-Blocking Async Antigravity AI Agent Telegram Bot...")
+    print("🚀 Starting Real-Time Streaming Antigravity AI Agent Telegram Bot...")
     print(f"📂 Default Workspace Dir: {config.DEFAULT_WORKSPACE}")
     print(f"🔒 Allowed User IDs: {config.ALLOWED_USER_IDS}")
     print("🤖 Bot is polling for messages...")
