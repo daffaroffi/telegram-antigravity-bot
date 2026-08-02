@@ -51,5 +51,22 @@ def run_antigravity_agent(prompt: str, chat_id: int, workspace_dir: str = None) 
         return f"❌ <b>Gagal menjalankan Antigravity:</b> {str(e)}"
 
 
+def run_smash_mode(prompt: str, chat_id: int, workspace_dir: str = None) -> str:
+    """Executes Antigravity in SMASH mode (aggressive force-fix & build)"""
+    smash_prompt = (
+        "💥 SMASH MODE INSTRUCTION: Complete the following task with maximum effort, thoroughness, and speed. "
+        "Fix all bugs, resolve any broken code/tests, build the project, and do not stop until everything runs 100% cleanly:\n\n"
+        f"{prompt}"
+    )
+    return run_antigravity_agent(smash_prompt, chat_id, workspace_dir)
+
+
+def resume_session(prompt: str, chat_id: int, workspace_dir: str = None) -> str:
+    """Resumes the active conversation thread with continuation flag"""
+    active_conversations[chat_id] = True
+    resume_prompt = prompt if prompt else "Lanjutkan pekerjaan dan konteks dari poin terakhir yang belum selesai."
+    return run_antigravity_agent(resume_prompt, chat_id, workspace_dir)
+
+
 def reset_session(chat_id: int):
     active_conversations.pop(chat_id, None)

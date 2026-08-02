@@ -23,12 +23,14 @@ def register_telegram_commands():
     """Registers slash commands into Telegram UI menu so typing '/' brings up autocomplete"""
     commands = [
         types.BotCommand("start", "Tampilkan menu utama & panduan"),
-        types.BotCommand("new", "Reset & mulai sesi AI baru"),
-        types.BotCommand("workspace", "Lihat/ubah folder kerja di server"),
-        types.BotCommand("goal", "Jalankan tugas khusus / long-running goal"),
-        types.BotCommand("plan", "Aktifkan mode perencanaan (Plan Mode)"),
-        types.BotCommand("status", "Cek statistik CPU, RAM, Disk & AI"),
-        types.BotCommand("help", "Tampilkan daftar lengkap perintah")
+        types.BotCommand("smash", "💥 Mode Hantam Bug & Force Fix sampai tuntas!"),
+        types.BotCommand("resume", "▶️ Lanjutkan sesi/konteks percakapan terakhir"),
+        types.BotCommand("new", "🔄 Reset & mulai sesi AI baru"),
+        types.BotCommand("goal", "🎯 Eksekusi tugas / goal khusus hingga tuntas"),
+        types.BotCommand("plan", "📋 Mode perencanaan (Plan Mode)"),
+        types.BotCommand("workspace", "📂 Lihat/ubah folder kerja di server"),
+        types.BotCommand("status", "📊 Cek statistik CPU, RAM, Disk & AI"),
+        types.BotCommand("help", "❓ Tampilkan daftar lengkap perintah")
     ]
     try:
         bot.set_my_commands(commands)
@@ -119,8 +121,10 @@ def send_welcome(message):
     help_text = (
         "🧠 <b>Antigravity AI Agent Bot</b>\n\n"
         "Selamat datang! Kamu memiliki akses penuh ke Antigravity AI dari Telegram.\n\n"
-        "<b>Perintah Slash:</b>\n"
-        "🆕 <code>/new</code> - Reset & mulai sesi obrolan baru\n"
+        "<b>Perintah Slash Keren:</b>\n"
+        "💥 <code>/smash <deskripsi></code> - Mode Hantam Bug & Force Fix sampai tuntas!\n"
+        "▶️ <code>/resume [instruksi]</code> - Lanjutkan sesi/konteks percakapan terakhir\n"
+        "🔄 <code>/new</code> - Reset & mulai sesi obrolan baru\n"
         "🎯 <code>/goal <deskripsi></code> - Eksekusi tugas / goal khusus\n"
         "📋 <code>/plan <deskripsi></code> - Aktifkan mode perencanaan (Plan Mode)\n"
         "📂 <code>/workspace [path]</code> - Ubah direktori kerja AI\n"
@@ -130,6 +134,29 @@ def send_welcome(message):
         "💡 <i>Ketik pesan atau instruksi kodingan apa saja. AI akan membaca, mengedit, dan mengeksekusi perintah di server!</i>"
     )
     reply_safe(message, help_text)
+
+
+@bot.message_handler(commands=['smash'])
+@check_auth
+def execute_smash(message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        reply_safe(message, "💥 <b>SMASH MODE!</b>\nMasukkan deskripsi bug atau tugas yang mau di-smash.\nContoh: <code>/smash Perbaiki semua error di bot.py dan tes sampai jalan!</code>")
+        return
+
+    smash_prompt = args[1].strip()
+    status_text = "💥 <b>SMASH MODE ACTIVATED!</b>\n🔨 <i>AI sedang menghancurkan bug dan mengesekusi perbaikan secara tuntas...</i>"
+    process_custom_agent_prompt(message, smash_prompt, status_text, runner_func=agent_runner.run_smash_mode)
+
+
+@bot.message_handler(commands=['resume'])
+@check_auth
+def execute_resume(message):
+    args = message.text.split(maxsplit=1)
+    resume_prompt = args[1].strip() if len(args) > 1 else None
+
+    status_text = "▶️ <b>RESUME MODE!</b>\n🔄 <i>Melanjutkan sesi percakapan dari konteks terakhir...</i>"
+    process_custom_agent_prompt(message, resume_prompt, status_text, runner_func=agent_runner.resume_session)
 
 
 @bot.message_handler(commands=['new', 'reset'])
@@ -211,14 +238,19 @@ def handle_text_prompt(message):
 
 
 def process_agent_prompt(message, prompt):
-    status_msg = reply_safe(message, "⚡ <b>Antigravity AI sedang berpikir & bekerja di server...</b>")
+    status_text = "⚡ <b>Antigravity AI sedang berpikir & bekerja di server...</b>"
+    process_custom_agent_prompt(message, prompt, status_text, runner_func=agent_runner.run_antigravity_agent)
+
+
+def process_custom_agent_prompt(message, prompt, status_text, runner_func):
+    status_msg = reply_safe(message, status_text)
 
     stop_typing = threading.Event()
     typing_thread = threading.Thread(target=keep_typing_alive, args=(message.chat.id, stop_typing))
     typing_thread.start()
 
     try:
-        response = agent_runner.run_antigravity_agent(prompt, message.chat.id, current_workspace)
+        response = runner_func(prompt, message.chat.id, current_workspace)
         
         stop_typing.set()
         typing_thread.join(timeout=1)
@@ -238,7 +270,7 @@ def process_agent_prompt(message, prompt):
 
 
 if __name__ == "__main__":
-    print("🚀 Starting Antigravity AI Agent Telegram Bot...")
+    print("🚀 Starting Antigravity AI Agent Telegram Bot with /smash and /resume...")
     print(f"📂 Default Workspace Dir: {config.DEFAULT_WORKSPACE}")
     print(f"🔒 Allowed User IDs: {config.ALLOWED_USER_IDS}")
     print("🤖 Bot is polling for messages...")
