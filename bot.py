@@ -23,8 +23,9 @@ def register_telegram_commands():
     """Registers slash commands into Telegram UI menu so typing '/' brings up autocomplete"""
     commands = [
         types.BotCommand("start", "Tampilkan menu utama & panduan"),
+        types.BotCommand("sessions", "📜 Lihat & pilih riwayat sesi percakapan"),
+        types.BotCommand("resume", "▶️ Pilih/lanjutkan sesi percakapan AI"),
         types.BotCommand("smash", "💥 Mode Hantam Bug & Force Fix sampai tuntas!"),
-        types.BotCommand("resume", "▶️ Lanjutkan sesi/konteks percakapan terakhir"),
         types.BotCommand("new", "🔄 Reset & mulai sesi AI baru"),
         types.BotCommand("goal", "🎯 Eksekusi tugas / goal khusus hingga tuntas"),
         types.BotCommand("plan", "📋 Mode perencanaan (Plan Mode)"),
@@ -87,6 +88,18 @@ def check_auth(func):
     return wrapper
 
 
+def check_auth_callback(func):
+    """Decorator to enforce security for callback queries (button clicks)"""
+    @functools.wraps(func)
+    def wrapper(call, *args, **kwargs):
+        user_id = call.from_user.id
+        if not is_authorized(user_id):
+            bot.answer_callback_query(call.id, "⛔ Akses ditolak! ID Anda tidak terdaftar.", show_alert=True)
+            return
+        return func(call, *args, **kwargs)
+    return wrapper
+
+
 def send_long_message(chat_id, text):
     """Splits and sends messages that exceed Telegram's 4096 character limit"""
     max_length = 4000
@@ -122,8 +135,9 @@ def send_welcome(message):
         "🧠 <b>Antigravity AI Agent Bot</b>\n\n"
         "Selamat datang! Kamu memiliki akses penuh ke Antigravity AI dari Telegram.\n\n"
         "<b>Perintah Slash Keren:</b>\n"
+        "📜 <code>/sessions</code> - Lihat & pilih riwayat sesi percakapan\n"
+        "▶️ <code>/resume [instruksi]</code> - Pilih atau lanjutkan sesi percakapan terakhir\n"
         "💥 <code>/smash <deskripsi></code> - Mode Hantam Bug & Force Fix sampai tuntas!\n"
-        "▶️ <code>/resume [instruksi]</code> - Lanjutkan sesi/konteks percakapan terakhir\n"
         "🔄 <code>/new</code> - Reset & mulai sesi obrolan baru\n"
         "🎯 <code>/goal <deskripsi></code> - Eksekusi tugas / goal khusus\n"
         "📋 <code>/plan <deskripsi></code> - Aktifkan mode perencanaan (Plan Mode)\n"
@@ -136,6 +150,70 @@ def send_welcome(message):
     reply_safe(message, help_text)
 
 
+@bot.message_handler(commands=['sessions'])
+@check_auth
+def list_sessions_command(message):
+    show_session_picker(message)
+
+
+@bot.message_handler(commands=['resume'])
+@check_auth
+def execute_resume(message):
+    args = message.text.split(maxsplit=1)
+    if len(args) > 1:
+        resume_prompt = args[1].strip()
+        status_text = "▶️ <b>RESUME MODE!</b>\n🔄 <i>Melanjutkan sesi percakapan dari konteks terakhir...</i>"
+        process_custom_agent_prompt(message, resume_prompt, status_text, runner_func=agent_runner.resume_session)
+    else:
+        show_session_picker(message)
+
+
+def show_session_picker(message):
+    sessions = agent_runner.get_recent_sessions(limit=5)
+    if not sessions:
+        reply_safe(message, "📜 Belum ada riwayat sesi percakapan di server.")
+        return
+
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for sess in sessions:
+        btn_text = f"💬 {sess['title']} ({sess['date']})"
+        btn = types.InlineKeyboardButton(btn_text, callback_data=f"select_session|{sess['id']}")
+        markup.add(btn)
+
+    btn_new = types.InlineKeyboardButton("🔄 Sesi Baru (/new)", callback_data="select_session|new")
+    markup.add(btn_new)
+
+    text = (
+        "📜 <b>Pilih Sesi Percakapan Antigravity:</b>\n\n"
+        "Klik salah satu sesi di bawah untuk memilih dan melanjutkan percakapan dari riwayat tersebut:"
+    )
+    reply_safe(message, text, reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("select_session|"))
+@check_auth_callback
+def handle_session_selection(call):
+    conv_id = call.data.split("|", 1)[1]
+    if conv_id == "new":
+        agent_runner.reset_session(call.message.chat.id)
+        bot.answer_callback_query(call.id, "Memulai sesi baru.")
+        bot.edit_message_text(
+            "🔄 <b>Sesi Percakapan Baru Dimulai.</b>\nSiap menerima instruksi baru!",
+            call.message.chat.id,
+            call.message.message_id
+        )
+    else:
+        agent_runner.set_active_session(call.message.chat.id, conv_id)
+        bot.answer_callback_query(call.id, "Sesi dipilih.")
+        bot.edit_message_text(
+            f"✅ <b>Sesi Percakapan Diaktifkan!</b>\n"
+            f"🆔 <b>ID Sesi:</b> <code>{conv_id}</code>\n\n"
+            f"Pesan kamu selanjutnya akan melanjutkan sesi percakapan ini.",
+            call.message.chat.id,
+            call.message.message_id
+        )
+
+
 @bot.message_handler(commands=['smash'])
 @check_auth
 def execute_smash(message):
@@ -145,18 +223,8 @@ def execute_smash(message):
         return
 
     smash_prompt = args[1].strip()
-    status_text = "💥 <b>SMASH MODE ACTIVATED!</b>\n🔨 <i>AI sedang menghancurkan bug dan mengesekusi perbaikan secara tuntas...</i>"
+    status_text = "💥 <b>SMASH MODE ACTIVATED!</b>\n🔨 <i>AI sedang menghancurkan bug dan mengeksekusi perbaikan secara tuntas...</i>"
     process_custom_agent_prompt(message, smash_prompt, status_text, runner_func=agent_runner.run_smash_mode)
-
-
-@bot.message_handler(commands=['resume'])
-@check_auth
-def execute_resume(message):
-    args = message.text.split(maxsplit=1)
-    resume_prompt = args[1].strip() if len(args) > 1 else None
-
-    status_text = "▶️ <b>RESUME MODE!</b>\n🔄 <i>Melanjutkan sesi percakapan dari konteks terakhir...</i>"
-    process_custom_agent_prompt(message, resume_prompt, status_text, runner_func=agent_runner.resume_session)
 
 
 @bot.message_handler(commands=['new', 'reset'])
@@ -270,7 +338,7 @@ def process_custom_agent_prompt(message, prompt, status_text, runner_func):
 
 
 if __name__ == "__main__":
-    print("🚀 Starting Antigravity AI Agent Telegram Bot with /smash and /resume...")
+    print("🚀 Starting Antigravity AI Agent Telegram Bot with Session Selection...")
     print(f"📂 Default Workspace Dir: {config.DEFAULT_WORKSPACE}")
     print(f"🔒 Allowed User IDs: {config.ALLOWED_USER_IDS}")
     print("🤖 Bot is polling for messages...")
