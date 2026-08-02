@@ -11,7 +11,6 @@ from telebot import types
 import config
 import agent_runner
 import stream_runner
-import formatter
 
 if not config.validate_config():
     print("Please configure .env before starting the bot.")
@@ -105,23 +104,22 @@ def check_auth_callback(func):
     return wrapper
 
 
-def send_long_message(chat_id, text, parse_markdown=True):
-    """Splits and sends messages that exceed Telegram's 4096 character limit using Telegram Rich Text HTML formatting"""
-    if parse_markdown:
-        formatted_text = formatter.markdown_to_telegram_html(text)
-    else:
-        formatted_text = text
+def send_long_message(chat_id, text):
+    """Splits and sends messages that exceed Telegram's 4096 character limit"""
+    max_length = 4000
+    if len(text) <= max_length:
+        try:
+            bot.send_message(chat_id, text, parse_mode="HTML")
+        except Exception:
+            bot.send_message(chat_id, text, parse_mode=None)
+        return
 
-    chunks = formatter.split_telegram_html(formatted_text, max_length=4000)
+    chunks = [text[i:i+max_length] for i in range(0, len(text), max_length)]
     for chunk in chunks:
         try:
             bot.send_message(chat_id, chunk, parse_mode="HTML")
-        except Exception as e:
-            print(f"[WARNING] HTML parse error in send_message: {e}. Falling back to plain text.")
-            try:
-                bot.send_message(chat_id, chunk, parse_mode=None)
-            except Exception as e2:
-                print(f"[ERROR] Failed to send fallback message: {e2}")
+        except Exception:
+            bot.send_message(chat_id, chunk, parse_mode=None)
 
 
 def keep_typing_alive(chat_id, stop_event):
@@ -297,26 +295,32 @@ def handle_session_selection(call):
             call.message.message_id
         )
         
-        # Load and send ALL previous chat turns directly into Telegram!
-        history_turns = agent_runner.get_full_session_history(conv_id)
+        history_turns = agent_runner.get_full_session_history_formatted(conv_id)
         if history_turns:
-            send_long_message(call.message.chat.id, "📜 <b>--- RIWAYAT PERCAKAPAN LENGKAP DI-LOAD ---</b>", parse_markdown=False)
-            for turn in history_turns:
+            send_long_message(call.message.chat.id, f"📜 <b>--- RIWAYAT PERCAKAPAN LENGKAP ({len(history_turns)} Pesan) ---</b>")
+            for i, turn in enumerate(history_turns, 1):
                 user_msg = turn.get("user", "")
                 ai_msg = turn.get("ai", "")
                 
+                msg_parts = []
                 if user_msg:
-                    send_long_message(call.message.chat.id, f"👤 **User:**\n{user_msg}", parse_markdown=True)
+                    u_clean = user_msg.replace("<", "&lt;").replace(">", "&gt;")
+                    msg_parts.append(f"👤 <b>User (#{i}):</b>\n{u_clean}")
                     
                 if ai_msg:
-                    send_long_message(call.message.chat.id, f"🤖 **Antigravity AI:**\n{ai_msg}", parse_markdown=True)
+                    msg_parts.append(f"🤖 <b>Antigravity AI (#{i}):</b>\n{ai_msg}")
+                    
+                if msg_parts:
+                    turn_text = "\n\n".join(msg_parts)
+                    send_long_message(call.message.chat.id, turn_text)
+                    time.sleep(0.2)
                     
         status_msg = (
             f"✅ <b>Sesi Percakapan Berhasil Di-Load Sepenuhnya!</b>\n"
             f"🆔 <b>ID Sesi:</b> <code>{conv_id}</code>\n\n"
             f"Seluruh riwayat obrolan di atas telah di-load kembali ke ruang chat. Pesan kamu selanjutnya akan melanjutkan sesi percakapan ini."
         )
-        send_long_message(call.message.chat.id, status_msg, parse_markdown=False)
+        send_long_message(call.message.chat.id, status_msg)
 
 
 @bot.message_handler(commands=['smash'])
@@ -465,7 +469,7 @@ def process_custom_agent_prompt(message, prompt, status_text, runner_func):
 
 
 if __name__ == "__main__":
-    print("🚀 Starting Antigravity AI Agent Bot with Full Transcript Restoration...")
+    print("🚀 Starting Antigravity AI Agent Bot with Robust Transcript Rendering...")
     print(f"📂 Default Workspace Dir: {config.DEFAULT_WORKSPACE}")
     print(f"🔒 Allowed User IDs: {config.ALLOWED_USER_IDS}")
     print("🤖 Bot is polling for messages...")

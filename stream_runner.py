@@ -147,8 +147,8 @@ def delete_session(conv_id: str) -> bool:
     return False
 
 
-def get_full_session_history(conv_id: str, max_turns: int = 20) -> list:
-    """Reads transcript.jsonl for conv_id and returns all formatted turn messages"""
+def get_full_session_history_formatted(conv_id: str) -> list:
+    """Reads transcript.jsonl for conv_id and returns all turn pairs safely"""
     transcript_file = os.path.join("/root/.gemini/antigravity-cli/brain", conv_id, ".system_generated", "logs", "transcript.jsonl")
     if not os.path.exists(transcript_file):
         return []
@@ -176,14 +176,17 @@ def get_full_session_history(conv_id: str, max_turns: int = 20) -> list:
                     elif msg_type == "PLANNER_RESPONSE":
                         content = data.get("content", "")
                         if content:
-                            current_turn["ai"] = content.strip()
+                            if current_turn["ai"]:
+                                current_turn["ai"] += "\n\n" + content.strip()
+                            else:
+                                current_turn["ai"] = content.strip()
                 except Exception:
                     pass
 
         if current_turn["user"] or current_turn["ai"]:
             turns.append(current_turn)
 
-        return turns[-max_turns:]
+        return turns
     except Exception as e:
         print(f"[ERROR] Failed to read full history: {e}")
         return []

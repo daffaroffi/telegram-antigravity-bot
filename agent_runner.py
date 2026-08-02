@@ -7,6 +7,6 @@ from stream_runner import (
     rename_session,
     delete_session,
     get_recent_sessions,
-    get_full_session_history,
+    get_full_session_history_formatted,
     active_conversations
 )
