@@ -205,13 +205,17 @@ def handle_session_selection(call):
     else:
         agent_runner.set_active_session(call.message.chat.id, conv_id)
         bot.answer_callback_query(call.id, "Sesi dipilih.")
-        bot.edit_message_text(
+        
+        status_msg = (
             f"✅ <b>Sesi Percakapan Diaktifkan!</b>\n"
             f"🆔 <b>ID Sesi:</b> <code>{conv_id}</code>\n\n"
-            f"Pesan kamu selanjutnya akan melanjutkan sesi percakapan ini.",
-            call.message.chat.id,
-            call.message.message_id
+            f"Pesan kamu selanjutnya akan melanjutkan percakapan di sesi ini."
         )
+        bot.edit_message_text(status_msg, call.message.chat.id, call.message.message_id)
+        
+        # Render transcript preview of previous messages directly into Telegram!
+        preview_text = agent_runner.get_session_transcript_preview(conv_id, max_turns=3)
+        send_long_message(call.message.chat.id, preview_text)
 
 
 @bot.message_handler(commands=['smash'])
@@ -349,7 +353,7 @@ def process_custom_agent_prompt(message, prompt, status_text, runner_func):
 
 
 if __name__ == "__main__":
-    print("🚀 Starting Real-Time Streaming Antigravity AI Agent Telegram Bot...")
+    print("🚀 Starting Antigravity AI Agent Bot with Session Transcript Rendering...")
     print(f"📂 Default Workspace Dir: {config.DEFAULT_WORKSPACE}")
     print(f"🔒 Allowed User IDs: {config.ALLOWED_USER_IDS}")
     print("🤖 Bot is polling for messages...")

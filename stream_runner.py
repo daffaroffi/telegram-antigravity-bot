@@ -68,6 +68,66 @@ def get_recent_sessions(limit=5):
     return sessions
 
 
+def get_session_transcript_preview(conv_id: str, max_turns: int = 3) -> str:
+    """Reads transcript.jsonl for conv_id and formats previous turns into clean Markdown text"""
+    transcript_file = os.path.join("/root/.gemini/antigravity-cli/brain", conv_id, ".system_generated", "logs", "transcript.jsonl")
+    if not os.path.exists(transcript_file):
+        return "📜 <i>(Riwayat percakapan tidak dapat ditemukan)</i>"
+
+    turns = []
+    current_turn = {"user": "", "ai": ""}
+
+    try:
+        with open(transcript_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                try:
+                    data = json.loads(line)
+                    msg_type = data.get("type")
+                    
+                    if msg_type == "USER_INPUT":
+                        content = data.get("content", "")
+                        match = re.search(r'<USER_REQUEST>(.*?)</USER_REQUEST>', content, re.DOTALL)
+                        raw_user = match.group(1).strip() if match else content.strip()
+                        
+                        if current_turn["user"] or current_turn["ai"]:
+                            turns.append(current_turn)
+                            current_turn = {"user": "", "ai": ""}
+                        current_turn["user"] = raw_user
+
+                    elif msg_type == "PLANNER_RESPONSE":
+                        content = data.get("content", "")
+                        if content:
+                            current_turn["ai"] = content.strip()
+                except Exception:
+                    pass
+
+        if current_turn["user"] or current_turn["ai"]:
+            turns.append(current_turn)
+
+        if not turns:
+            return "📜 <i>(Sesi ini belum memiliki percakapan)</i>"
+
+        recent_turns = turns[-max_turns:]
+        formatted = []
+        for turn in recent_turns:
+            u_text = turn["user"][:250] + ("..." if len(turn["user"]) > 250 else "")
+            a_text = turn["ai"][:250] + ("..." if len(turn["ai"]) > 250 else "")
+
+            # Clean any unescaped tags for HTML safety
+            u_clean = u_text.replace("<", "&lt;").replace(">", "&gt;")
+            a_clean = a_text.replace("<", "&lt;").replace(">", "&gt;")
+
+            entry = f"👤 <b>User:</b>\n<i>{u_clean}</i>\n\n🤖 <b>Antigravity AI:</b>\n<i>{a_clean}</i>"
+            formatted.append(entry)
+
+        header = f"📜 <b>Pratinjau Percakapan Sebelumnya:</b>\n\n"
+        body = "\n\n───────────────\n\n".join(formatted)
+        return header + body
+
+    except Exception as e:
+        return f"📜 Error membaca riwayat: {str(e)}"
+
+
 def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progress_callback=None) -> str:
     """Runs agy with stream-json, feeding real-time updates back to Telegram"""
     if not os.path.exists(config.AGY_PATH):
