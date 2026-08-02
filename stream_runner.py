@@ -123,11 +123,11 @@ def delete_session(conv_id: str) -> bool:
     return False
 
 
-def get_session_transcript_preview(conv_id: str, max_turns: int = 3) -> str:
-    """Reads transcript.jsonl for conv_id and formats previous turns into clean Markdown text"""
+def get_full_session_history(conv_id: str, max_turns: int = 20) -> list:
+    """Reads transcript.jsonl for conv_id and returns all formatted turn messages"""
     transcript_file = os.path.join("/root/.gemini/antigravity-cli/brain", conv_id, ".system_generated", "logs", "transcript.jsonl")
     if not os.path.exists(transcript_file):
-        return "📜 <i>(Riwayat percakapan tidak dapat ditemukan)</i>"
+        return []
 
     turns = []
     current_turn = {"user": "", "ai": ""}
@@ -159,27 +159,10 @@ def get_session_transcript_preview(conv_id: str, max_turns: int = 3) -> str:
         if current_turn["user"] or current_turn["ai"]:
             turns.append(current_turn)
 
-        if not turns:
-            return "📜 <i>(Sesi ini belum memiliki percakapan)</i>"
-
-        recent_turns = turns[-max_turns:]
-        formatted = []
-        for turn in recent_turns:
-            u_text = turn["user"][:250] + ("..." if len(turn["user"]) > 250 else "")
-            a_text = turn["ai"][:250] + ("..." if len(turn["ai"]) > 250 else "")
-
-            u_clean = u_text.replace("<", "&lt;").replace(">", "&gt;")
-            a_clean = a_text.replace("<", "&lt;").replace(">", "&gt;")
-
-            entry = f"👤 <b>User:</b>\n<i>{u_clean}</i>\n\n🤖 <b>Antigravity AI:</b>\n<i>{a_clean}</i>"
-            formatted.append(entry)
-
-        header = f"📜 <b>Pratinjau Percakapan Sebelumnya:</b>\n\n"
-        body = "\n\n───────────────\n\n".join(formatted)
-        return header + body
-
+        return turns[-max_turns:]
     except Exception as e:
-        return f"📜 Error membaca riwayat: {str(e)}"
+        print(f"[ERROR] Failed to read full history: {e}")
+        return []
 
 
 def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progress_callback=None) -> tuple:

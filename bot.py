@@ -136,8 +136,8 @@ def keep_typing_alive(chat_id, stop_event):
 @check_auth
 def send_welcome(message):
     help_text = (
-        "🧠 <b>Antigravity AI Agent Bot (Session Management Enabled)</b>\n\n"
-        "Selamat datang! Kamu memiliki akses penuh ke Antigravity AI dari Telegram.\n\n"
+        "🧠 <b>Antigravity AI Agent Bot (Full Session Restoration)</b>\n\n"
+        "Selamat datang! Kamu memiliki akses penuh ke Antigravity AI dari Telegram dengan pemuatan riwayat obrolan lengkap saat berpindah sesi.\n\n"
         "<b>Perintah Slash Keren:</b>\n"
         "📜 <code>/sessions</code> - Lihat & pilih riwayat sesi percakapan\n"
         "✏️ <code>/rename nama_baru</code> - Ubah nama/judul sesi percakapan aktif\n"
@@ -204,7 +204,6 @@ def delete_session_command(message):
 def handle_delete_session_callback(call):
     conv_id = call.data.split("|", 1)[1]
     if agent_runner.delete_session(conv_id):
-        # Reset active session if deleted
         if agent_runner.active_conversations.get(call.message.chat.id) == conv_id:
             agent_runner.reset_session(call.message.chat.id)
         
@@ -288,17 +287,35 @@ def handle_session_selection(call):
         )
     else:
         agent_runner.set_active_session(call.message.chat.id, conv_id)
-        bot.answer_callback_query(call.id, "Sesi dipilih.")
+        bot.answer_callback_query(call.id, "Memuat seluruh riwayat percakapan...")
         
-        status_msg = (
-            f"✅ <b>Sesi Percakapan Diaktifkan!</b>\n"
-            f"🆔 <b>ID Sesi:</b> <code>{conv_id}</code>\n\n"
-            f"Pesan kamu selanjutnya akan melanjutkan percakapan di sesi ini."
+        bot.edit_message_text(
+            f"🔄 <b>Memuat seluruh riwayat percakapan untuk sesi:</b> <code>{conv_id[:8]}...</code>",
+            call.message.chat.id,
+            call.message.message_id
         )
-        bot.edit_message_text(status_msg, call.message.chat.id, call.message.message_id)
         
-        preview_text = agent_runner.get_session_transcript_preview(conv_id, max_turns=3)
-        send_long_message(call.message.chat.id, preview_text)
+        # Load and send ALL previous chat turns directly into Telegram!
+        history_turns = agent_runner.get_full_session_history(conv_id)
+        if history_turns:
+            send_long_message(call.message.chat.id, "📜 <b>--- RIWAYAT PERCAKAPAN LENGKAP DI-LOAD ---</b>")
+            for turn in history_turns:
+                user_msg = turn.get("user", "")
+                ai_msg = turn.get("ai", "")
+                
+                if user_msg:
+                    u_clean = user_msg.replace("<", "&lt;").replace(">", "&gt;")
+                    send_long_message(call.message.chat.id, f"👤 <b>User:</b>\n{u_clean}")
+                    
+                if ai_msg:
+                    send_long_message(call.message.chat.id, f"🤖 <b>Antigravity AI:</b>\n{ai_msg}")
+                    
+        status_msg = (
+            f"✅ <b>Sesi Percakapan Berhasil Di-Load Sepenuhnya!</b>\n"
+            f"🆔 <b>ID Sesi:</b> <code>{conv_id}</code>\n\n"
+            f"Seluruh riwayat obrolan di atas telah di-load kembali ke ruang chat. Pesan kamu selanjutnya akan melanjutkan sesi percakapan ini."
+        )
+        send_long_message(call.message.chat.id, status_msg)
 
 
 @bot.message_handler(commands=['smash'])
@@ -447,7 +464,7 @@ def process_custom_agent_prompt(message, prompt, status_text, runner_func):
 
 
 if __name__ == "__main__":
-    print("🚀 Starting Antigravity AI Agent Bot with Rename & Delete Session Feature...")
+    print("🚀 Starting Antigravity AI Agent Bot with Full Transcript Restoration...")
     print(f"📂 Default Workspace Dir: {config.DEFAULT_WORKSPACE}")
     print(f"🔒 Allowed User IDs: {config.ALLOWED_USER_IDS}")
     print("🤖 Bot is polling for messages...")
