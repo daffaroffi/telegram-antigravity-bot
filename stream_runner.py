@@ -5,6 +5,7 @@ import re
 import shutil
 import time
 import threading
+import queue
 from datetime import datetime
 import config
 
@@ -34,6 +35,16 @@ def save_active_conversations():
 
 active_conversations = load_active_conversations()
 chat_token_usage = {}  # chat_id -> {'session_tokens': 0, 'total_tokens': 0}
+
+# Per-chat task queue and lock to prevent concurrent process collisions
+chat_locks = {}
+chat_queues = {}
+
+
+def get_chat_lock(chat_id: int):
+    if chat_id not in chat_locks:
+        chat_locks[chat_id] = threading.Lock()
+    return chat_locks[chat_id]
 
 
 def get_token_usage(chat_id: int):
@@ -193,106 +204,113 @@ def get_full_session_history_formatted(conv_id: str, max_turns: int = 5) -> list
 
 
 def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progress_callback=None) -> tuple:
-    """Runs agy with stream-json, feeding real-time updates and returning (response, usage_dict)"""
+    """Runs agy with stream-json in an isolated process group with chat lock guard"""
     if not os.path.exists(config.AGY_PATH):
         return f"❌ Executable agy tidak ditemukan di <code>{config.AGY_PATH}</code>", {}
 
-    cwd = workspace_dir or config.DEFAULT_WORKSPACE
-    os.makedirs(cwd, exist_ok=True)
+    lock = get_chat_lock(chat_id)
+    with lock:
+        cwd = workspace_dir or config.DEFAULT_WORKSPACE
+        os.makedirs(cwd, exist_ok=True)
 
-    cmd = [
-        config.AGY_PATH,
-        "-p", prompt,
-        "--output-format", "stream-json",
-        "--dangerously-skip-permissions"
-    ]
+        cmd = [
+            config.AGY_PATH,
+            "-p", prompt,
+            "--output-format", "stream-json",
+            "--dangerously-skip-permissions"
+        ]
 
-    conv_target = active_conversations.get(chat_id)
-    if isinstance(conv_target, str) and conv_target:
-        cmd.extend(["--conversation", conv_target])
-    elif conv_target is True:
-        cmd.append("-c")
+        conv_target = active_conversations.get(chat_id)
+        if isinstance(conv_target, str) and conv_target:
+            cmd.extend(["--conversation", conv_target])
+        elif conv_target is True:
+            cmd.append("-c")
 
-    try:
-        process = subprocess.Popen(
-            cmd,
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1
-        )
+        try:
+            # Run in isolated session/process group so client disconnects NEVER send SIGHUP to agy
+            process = subprocess.Popen(
+                cmd,
+                cwd=cwd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                start_new_session=True
+            )
 
-        final_response = ""
-        last_update_time = 0
-        current_activities = []
-        turn_usage = {}
+            final_response = ""
+            last_update_time = 0
+            current_activities = []
+            turn_usage = {}
 
-        for line in iter(process.stdout.readline, ''):
-            line = line.strip()
-            if not line:
-                continue
+            for line in iter(process.stdout.readline, ''):
+                line = line.strip()
+                if not line:
+                    continue
 
-            try:
-                data = json.loads(line)
-                event_type = data.get("event")
+                try:
+                    data = json.loads(line)
+                    event_type = data.get("event")
 
-                if event_type == "init":
-                    conv_id = data.get("conversation_id")
-                    if conv_id:
-                        active_conversations[chat_id] = conv_id
-                        save_active_conversations()
+                    if event_type == "init":
+                        conv_id = data.get("conversation_id")
+                        if conv_id:
+                            active_conversations[chat_id] = conv_id
+                            save_active_conversations()
 
-                elif event_type == "step_update":
-                    step = data.get("step_update", {})
-                    step_type = step.get("step_type", "")
-                    
-                    if step.get("usage"):
-                        turn_usage = step.get("usage")
+                    elif event_type == "step_update":
+                        step = data.get("step_update", {})
+                        step_type = step.get("step_type", "")
+                        
+                        if step.get("usage"):
+                            turn_usage = step.get("usage")
 
-                    tool_call = step.get("tool_call") or step.get("tool") or {}
-                    tool_name = tool_call.get("name", step_type)
-                    args = tool_call.get("args", {})
-                    
-                    action = args.get("toolAction") or args.get("toolSummary")
-                    if action:
-                        current_activities.append(f"• 🛠️ {action}")
-                    elif tool_name and tool_name not in ["unknown", "user_input", "checkpoint"]:
-                        current_activities.append(f"• ⚡ Processing step: <code>{tool_name}</code>")
+                        tool_call = step.get("tool_call") or step.get("tool") or {}
+                        tool_name = tool_call.get("name", step_type)
+                        args = tool_call.get("args", {})
+                        
+                        action = args.get("toolAction") or args.get("toolSummary")
+                        if action:
+                            current_activities.append(f"• 🛠️ {action}")
+                        elif tool_name and tool_name not in ["unknown", "user_input", "checkpoint"]:
+                            current_activities.append(f"• ⚡ Processing step: <code>{tool_name}</code>")
 
-                    now = time.time()
-                    if progress_callback and (now - last_update_time >= 1.5) and current_activities:
-                        recent_logs = "\n".join(current_activities[-5:])
-                        progress_callback(f"⚡ <b>Antigravity AI sedang bekerja...</b>\n\n🔄 <b>Aktivitas Real-Time:</b>\n{recent_logs}")
-                        last_update_time = now
+                        now = time.time()
+                        if progress_callback and (now - last_update_time >= 1.5) and current_activities:
+                            recent_logs = "\n".join(current_activities[-5:])
+                            try:
+                                progress_callback(f"⚡ <b>Antigravity AI sedang bekerja...</b>\n\n🔄 <b>Aktivitas Real-Time:</b>\n{recent_logs}")
+                            except Exception:
+                                pass
+                            last_update_time = now
 
-                elif event_type == "result":
-                    res = data.get("result", {})
-                    final_response = res.get("response", "")
-                    if res.get("usage"):
-                        turn_usage = res.get("usage")
+                    elif event_type == "result":
+                        res = data.get("result", {})
+                        final_response = res.get("response", "")
+                        if res.get("usage"):
+                            turn_usage = res.get("usage")
 
-            except json.JSONDecodeError:
-                pass
+                except json.JSONDecodeError:
+                    pass
 
-        process.stdout.close()
-        process.wait()
+            process.stdout.close()
+            process.wait()
 
-        if not active_conversations.get(chat_id):
-            active_conversations[chat_id] = True
-            save_active_conversations()
+            if not active_conversations.get(chat_id):
+                active_conversations[chat_id] = True
+                save_active_conversations()
 
-        usage_stats = get_token_usage(chat_id)
-        if turn_usage and turn_usage.get("total_tokens"):
-            t_tok = turn_usage["total_tokens"]
-            usage_stats['session_tokens'] += t_tok
-            usage_stats['total_tokens'] += t_tok
+            usage_stats = get_token_usage(chat_id)
+            if turn_usage and turn_usage.get("total_tokens"):
+                t_tok = turn_usage["total_tokens"]
+                usage_stats['session_tokens'] += t_tok
+                usage_stats['total_tokens'] += t_tok
 
-        resp_text = final_response if final_response else "✅ Tugas selesai."
-        return resp_text, turn_usage
+            resp_text = final_response if final_response else "✅ Tugas selesai."
+            return resp_text, turn_usage
 
-    except Exception as e:
-        return f"❌ <b>Gagal menjalankan Antigravity:</b> {str(e)}", {}
+        except Exception as e:
+            return f"❌ <b>Gagal menjalankan Antigravity:</b> {str(e)}", {}
 
 
 def run_smash_stream(prompt: str, chat_id: int, workspace_dir: str, progress_callback=None) -> tuple:
