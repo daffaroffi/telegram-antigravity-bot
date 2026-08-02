@@ -2,6 +2,7 @@ import subprocess
 import os
 import json
 import re
+import shutil
 import time
 import threading
 from datetime import datetime
@@ -17,7 +18,7 @@ def get_token_usage(chat_id: int):
     return chat_token_usage[chat_id]
 
 
-def get_recent_sessions(limit=5):
+def get_recent_sessions(limit=10):
     """Scans brain directory for recent Antigravity conversation sessions"""
     brain_dir = "/root/.gemini/antigravity-cli/brain"
     if not os.path.exists(brain_dir):
@@ -73,6 +74,53 @@ def get_recent_sessions(limit=5):
         print(f"[ERROR] Failed to list sessions: {e}")
 
     return sessions
+
+
+def rename_session(conv_id: str, new_name: str) -> bool:
+    """Updates the first USER_INPUT prompt in transcript.jsonl with new_name"""
+    transcript_file = os.path.join("/root/.gemini/antigravity-cli/brain", conv_id, ".system_generated", "logs", "transcript.jsonl")
+    if not os.path.exists(transcript_file):
+        return False
+
+    try:
+        lines = []
+        with open(transcript_file, 'r', encoding='utf-8') as f:
+            for i, line in enumerate(f):
+                if i == 0:
+                    try:
+                        data = json.loads(line)
+                        if data.get("type") == "USER_INPUT":
+                            content = data.get("content", "")
+                            if "<USER_REQUEST>" in content:
+                                new_content = re.sub(r'<USER_REQUEST>(.*?)</USER_REQUEST>', f'<USER_REQUEST>\n{new_name}\n</USER_REQUEST>', content, flags=re.DOTALL)
+                                data["content"] = new_content
+                            else:
+                                data["content"] = f"<USER_REQUEST>\n{new_name}\n</USER_REQUEST>"
+                            lines.append(json.dumps(data) + "\n")
+                            continue
+                    except Exception:
+                        pass
+                lines.append(line)
+
+        with open(transcript_file, 'w', encoding='utf-8') as f:
+            f.writelines(lines)
+        return True
+    except Exception as e:
+        print(f"[ERROR] Failed to rename session: {e}")
+        return False
+
+
+def delete_session(conv_id: str) -> bool:
+    """Deletes conversation folder from brain directory"""
+    folder = os.path.join("/root/.gemini/antigravity-cli/brain", conv_id)
+    if os.path.exists(folder):
+        try:
+            shutil.rmtree(folder)
+            return True
+        except Exception as e:
+            print(f"[ERROR] Failed to delete session: {e}")
+            return False
+    return False
 
 
 def get_session_transcript_preview(conv_id: str, max_turns: int = 3) -> str:
@@ -188,7 +236,6 @@ def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progre
                     step = data.get("step_update", {})
                     step_type = step.get("step_type", "")
                     
-                    # Extract usage if present in step
                     if step.get("usage"):
                         turn_usage = step.get("usage")
 
@@ -223,7 +270,6 @@ def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progre
         if not active_conversations.get(chat_id):
             active_conversations[chat_id] = True
 
-        # Accumulate token usage stats
         usage_stats = get_token_usage(chat_id)
         if turn_usage and turn_usage.get("total_tokens"):
             t_tok = turn_usage["total_tokens"]
@@ -253,7 +299,6 @@ def resume_stream(prompt: str, chat_id: int, workspace_dir: str, progress_callba
 
 def set_active_session(chat_id: int, conv_id: str):
     active_conversations[chat_id] = conv_id
-    # Reset session tokens counter for new/selected session
     get_token_usage(chat_id)['session_tokens'] = 0
 
 

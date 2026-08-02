@@ -4,6 +4,8 @@ from stream_runner import (
     resume_stream as resume_session,
     set_active_session,
     reset_session,
+    rename_session,
+    delete_session,
     get_recent_sessions,
     get_session_transcript_preview,
     active_conversations

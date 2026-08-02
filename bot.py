@@ -24,9 +24,11 @@ def register_telegram_commands():
     """Registers slash commands into Telegram UI menu so typing '/' brings up autocomplete"""
     commands = [
         types.BotCommand("start", "Tampilkan menu utama & panduan"),
-        types.BotCommand("usage", "📊 Cek statistik penggunaan Token & Limit"),
         types.BotCommand("sessions", "📜 Lihat & pilih riwayat sesi percakapan"),
         types.BotCommand("resume", "▶️ Pilih/lanjutkan sesi percakapan AI"),
+        types.BotCommand("rename", "✏️ Ubah nama/judul sesi percakapan aktif"),
+        types.BotCommand("delete", "🗑️ Hapus sesi percakapan dari riwayat"),
+        types.BotCommand("usage", "📊 Cek statistik penggunaan Token & Limit"),
         types.BotCommand("smash", "💥 Mode Hantam Bug & Force Fix sampai tuntas!"),
         types.BotCommand("new", "🔄 Reset & mulai sesi AI baru"),
         types.BotCommand("goal", "🎯 Eksekusi tugas / goal khusus hingga tuntas"),
@@ -134,23 +136,86 @@ def keep_typing_alive(chat_id, stop_event):
 @check_auth
 def send_welcome(message):
     help_text = (
-        "🧠 <b>Antigravity AI Agent Bot (Token & Usage Monitoring)</b>\n\n"
-        "Selamat datang! Kamu memiliki akses penuh ke Antigravity AI dari Telegram dengan fitur pemantauan Token Usage & Limit.\n\n"
+        "🧠 <b>Antigravity AI Agent Bot (Session Management Enabled)</b>\n\n"
+        "Selamat datang! Kamu memiliki akses penuh ke Antigravity AI dari Telegram.\n\n"
         "<b>Perintah Slash Keren:</b>\n"
-        "📊 <code>/usage</code> - Cek penggunaan Token & statistik Limit\n"
         "📜 <code>/sessions</code> - Lihat & pilih riwayat sesi percakapan\n"
+        "✏️ <code>/rename nama_baru</code> - Ubah nama/judul sesi percakapan aktif\n"
+        "🗑️ <code>/delete</code> - Hapus sesi percakapan dari riwayat\n"
+        "📊 <code>/usage</code> - Cek penggunaan Token & statistik Limit\n"
         "▶️ <code>/resume [instruksi]</code> - Pilih atau lanjutkan sesi percakapan terakhir\n"
         "💥 <code>/smash deskripsi</code> - Mode Hantam Bug & Force Fix sampai tuntas!\n"
         "🔄 <code>/new</code> - Reset & mulai sesi obrolan baru\n"
         "🎯 <code>/goal deskripsi</code> - Eksekusi tugas / goal khusus\n"
         "📋 <code>/plan deskripsi</code> - Aktifkan mode perencanaan (Plan Mode)\n"
         "📂 <code>/workspace [path]</code> - Ubah direktori kerja AI\n"
-        "📊 <code>/status</code> - Cek status RAM, Disk, CPU & AI\n"
+        "📊 <code>/status</code> - Cek status RAM, Disk & AI\n"
         "❓ <code>/help</code> - Tampilkan bantuan ini\n\n"
         f"<b>Workspace Saat Ini:</b>\n<code>{current_workspace}</code>\n\n"
         "💡 <i>Ketik pesan atau instruksi kodingan apa saja. AI akan membaca, mengedit, dan mengeksekusi perintah di server!</i>"
     )
     reply_safe(message, help_text)
+
+
+@bot.message_handler(commands=['rename'])
+@check_auth
+def rename_session_command(message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        reply_safe(message, "✏️ <b>Gunakan:</b> <code>/rename Judul Sesi Baru</code>\nContoh: <code>/rename Project Web Scraper</code>")
+        return
+
+    new_title = args[1].strip()
+    active_conv = agent_runner.active_conversations.get(message.chat.id)
+
+    if not isinstance(active_conv, str):
+        reply_safe(message, "⚠️ Belum ada sesi percakapan aktif yang bisa di-rename. Pilih sesi dulu via <code>/sessions</code> atau kirim instruksi baru.")
+        return
+
+    if agent_runner.rename_session(active_conv, new_title):
+        reply_safe(message, f"✅ <b>Nama Sesi Berhasil Diubah!</b>\n🆔 <b>ID Sesi:</b> <code>{active_conv}</code>\n✏️ <b>Judul Baru:</b> <code>{new_title}</code>")
+    else:
+        reply_safe(message, "❌ Gagal merename sesi percakapan.")
+
+
+@bot.message_handler(commands=['delete'])
+@check_auth
+def delete_session_command(message):
+    sessions = agent_runner.get_recent_sessions(limit=8)
+    if not sessions:
+        reply_safe(message, "📜 Belum ada riwayat sesi percakapan untuk dihapus.")
+        return
+
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for sess in sessions:
+        btn_text = f"🗑️ Hapus: {sess['title']} ({sess['date']})"
+        btn = types.InlineKeyboardButton(btn_text, callback_data=f"delete_session|{sess['id']}")
+        markup.add(btn)
+
+    text = (
+        "🗑️ <b>Hapus Sesi Percakapan:</b>\n\n"
+        "Klik salah satu sesi di bawah untuk menghapusnya secara permanen dari server:"
+    )
+    reply_safe(message, text, reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("delete_session|"))
+@check_auth_callback
+def handle_delete_session_callback(call):
+    conv_id = call.data.split("|", 1)[1]
+    if agent_runner.delete_session(conv_id):
+        # Reset active session if deleted
+        if agent_runner.active_conversations.get(call.message.chat.id) == conv_id:
+            agent_runner.reset_session(call.message.chat.id)
+        
+        bot.answer_callback_query(call.id, "Sesi berhasil dihapus.")
+        bot.edit_message_text(
+            f"✅ <b>Sesi Percakapan <code>{conv_id[:8]}...</code> Berhasil Dihapus!</b>",
+            call.message.chat.id,
+            call.message.message_id
+        )
+    else:
+        bot.answer_callback_query(call.id, "Gagal menghapus sesi.", show_alert=True)
 
 
 @bot.message_handler(commands=['usage'])
@@ -362,7 +427,6 @@ def process_custom_agent_prompt(message, prompt, status_text, runner_func):
                 except Exception:
                     pass
 
-            # Append Token Usage Badge at the end of response
             final_output = response
             if turn_usage and turn_usage.get("total_tokens"):
                 tot = turn_usage["total_tokens"]
@@ -383,7 +447,7 @@ def process_custom_agent_prompt(message, prompt, status_text, runner_func):
 
 
 if __name__ == "__main__":
-    print("🚀 Starting Antigravity AI Agent Bot with Token Usage & Limit Tracking...")
+    print("🚀 Starting Antigravity AI Agent Bot with Rename & Delete Session Feature...")
     print(f"📂 Default Workspace Dir: {config.DEFAULT_WORKSPACE}")
     print(f"🔒 Allowed User IDs: {config.ALLOWED_USER_IDS}")
     print("🤖 Bot is polling for messages...")
