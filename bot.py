@@ -137,10 +137,10 @@ def send_welcome(message):
         "<b>Perintah Slash Keren:</b>\n"
         "📜 <code>/sessions</code> - Lihat & pilih riwayat sesi percakapan\n"
         "▶️ <code>/resume [instruksi]</code> - Pilih atau lanjutkan sesi percakapan terakhir\n"
-        "💥 <code>/smash <deskripsi></code> - Mode Hantam Bug & Force Fix sampai tuntas!\n"
+        "💥 <code>/smash deskripsi</code> - Mode Hantam Bug & Force Fix sampai tuntas!\n"
         "🔄 <code>/new</code> - Reset & mulai sesi obrolan baru\n"
-        "🎯 <code>/goal <deskripsi></code> - Eksekusi tugas / goal khusus\n"
-        "📋 <code>/plan <deskripsi></code> - Aktifkan mode perencanaan (Plan Mode)\n"
+        "🎯 <code>/goal deskripsi</code> - Eksekusi tugas / goal khusus\n"
+        "📋 <code>/plan deskripsi</code> - Aktifkan mode perencanaan (Plan Mode)\n"
         "📂 <code>/workspace [path]</code> - Ubah direktori kerja AI\n"
         "📊 <code>/status</code> - Cek status RAM, Disk & AI\n"
         "❓ <code>/help</code> - Tampilkan bantuan ini\n\n"
@@ -313,32 +313,37 @@ def process_agent_prompt(message, prompt):
 def process_custom_agent_prompt(message, prompt, status_text, runner_func):
     status_msg = reply_safe(message, status_text)
 
-    stop_typing = threading.Event()
-    typing_thread = threading.Thread(target=keep_typing_alive, args=(message.chat.id, stop_typing))
-    typing_thread.start()
+    def worker():
+        stop_typing = threading.Event()
+        typing_thread = threading.Thread(target=keep_typing_alive, args=(message.chat.id, stop_typing))
+        typing_thread.start()
 
-    try:
-        response = runner_func(prompt, message.chat.id, current_workspace)
-        
-        stop_typing.set()
-        typing_thread.join(timeout=1)
+        try:
+            response = runner_func(prompt, message.chat.id, current_workspace)
+            
+            stop_typing.set()
+            typing_thread.join(timeout=1)
 
-        if status_msg:
-            try:
-                bot.delete_message(message.chat.id, status_msg.message_id)
-            except Exception:
-                pass
+            if status_msg:
+                try:
+                    bot.delete_message(message.chat.id, status_msg.message_id)
+                except Exception:
+                    pass
 
-        send_long_message(message.chat.id, response)
+            send_long_message(message.chat.id, response)
 
-    except Exception as e:
-        stop_typing.set()
-        traceback.print_exc()
-        reply_safe(message, f"❌ <b>Error memproses prompt:</b> {str(e)}")
+        except Exception as e:
+            stop_typing.set()
+            traceback.print_exc()
+            reply_safe(message, f"❌ <b>Error memproses prompt:</b> {str(e)}")
+
+    # Execute AI task asynchronously in background thread so command handlers remain INSTANT!
+    task_thread = threading.Thread(target=worker, daemon=True)
+    task_thread.start()
 
 
 if __name__ == "__main__":
-    print("🚀 Starting Antigravity AI Agent Telegram Bot with Session Selection...")
+    print("🚀 Starting Non-Blocking Async Antigravity AI Agent Telegram Bot...")
     print(f"📂 Default Workspace Dir: {config.DEFAULT_WORKSPACE}")
     print(f"🔒 Allowed User IDs: {config.ALLOWED_USER_IDS}")
     print("🤖 Bot is polling for messages...")
