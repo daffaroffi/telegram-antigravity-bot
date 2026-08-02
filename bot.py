@@ -10,6 +10,7 @@ from telebot import types
 
 import config
 import agent_runner
+import stream_runner
 
 if not config.validate_config():
     print("Please configure .env before starting the bot.")
@@ -23,6 +24,7 @@ def register_telegram_commands():
     """Registers slash commands into Telegram UI menu so typing '/' brings up autocomplete"""
     commands = [
         types.BotCommand("start", "Tampilkan menu utama & panduan"),
+        types.BotCommand("usage", "📊 Cek statistik penggunaan Token & Limit"),
         types.BotCommand("sessions", "📜 Lihat & pilih riwayat sesi percakapan"),
         types.BotCommand("resume", "▶️ Pilih/lanjutkan sesi percakapan AI"),
         types.BotCommand("smash", "💥 Mode Hantam Bug & Force Fix sampai tuntas!"),
@@ -132,9 +134,10 @@ def keep_typing_alive(chat_id, stop_event):
 @check_auth
 def send_welcome(message):
     help_text = (
-        "🧠 <b>Antigravity AI Agent Bot (Real-Time Live Progress)</b>\n\n"
-        "Selamat datang! Kamu memiliki akses penuh ke Antigravity AI dari Telegram dengan update progress real-time.\n\n"
+        "🧠 <b>Antigravity AI Agent Bot (Token & Usage Monitoring)</b>\n\n"
+        "Selamat datang! Kamu memiliki akses penuh ke Antigravity AI dari Telegram dengan fitur pemantauan Token Usage & Limit.\n\n"
         "<b>Perintah Slash Keren:</b>\n"
+        "📊 <code>/usage</code> - Cek penggunaan Token & statistik Limit\n"
         "📜 <code>/sessions</code> - Lihat & pilih riwayat sesi percakapan\n"
         "▶️ <code>/resume [instruksi]</code> - Pilih atau lanjutkan sesi percakapan terakhir\n"
         "💥 <code>/smash deskripsi</code> - Mode Hantam Bug & Force Fix sampai tuntas!\n"
@@ -142,12 +145,28 @@ def send_welcome(message):
         "🎯 <code>/goal deskripsi</code> - Eksekusi tugas / goal khusus\n"
         "📋 <code>/plan deskripsi</code> - Aktifkan mode perencanaan (Plan Mode)\n"
         "📂 <code>/workspace [path]</code> - Ubah direktori kerja AI\n"
-        "📊 <code>/status</code> - Cek status RAM, Disk & AI\n"
+        "📊 <code>/status</code> - Cek status RAM, Disk, CPU & AI\n"
         "❓ <code>/help</code> - Tampilkan bantuan ini\n\n"
         f"<b>Workspace Saat Ini:</b>\n<code>{current_workspace}</code>\n\n"
         "💡 <i>Ketik pesan atau instruksi kodingan apa saja. AI akan membaca, mengedit, dan mengeksekusi perintah di server!</i>"
     )
     reply_safe(message, help_text)
+
+
+@bot.message_handler(commands=['usage'])
+@check_auth
+def send_usage(message):
+    usage = stream_runner.get_token_usage(message.chat.id)
+    sess_tok = usage['session_tokens']
+    tot_tok = usage['total_tokens']
+
+    usage_text = (
+        "📈 <b>Statistik Penggunaan Token Antigravity</b>\n\n"
+        f"💬 <b>Sesi Aktif Saat Ini:</b> {sess_tok:,} Tokens\n"
+        f"📊 <b>Total Akumulasi:</b> {tot_tok:,} Tokens\n\n"
+        "💡 <i>Catatan: Antigravity CLI memanfaatkan sistem caching token otomatis untuk menghemat konsumsi token secara efisien.</i>"
+    )
+    reply_safe(message, usage_text)
 
 
 @bot.message_handler(commands=['sessions'])
@@ -213,7 +232,6 @@ def handle_session_selection(call):
         )
         bot.edit_message_text(status_msg, call.message.chat.id, call.message.message_id)
         
-        # Render transcript preview of previous messages directly into Telegram!
         preview_text = agent_runner.get_session_transcript_preview(conv_id, max_turns=3)
         send_long_message(call.message.chat.id, preview_text)
 
@@ -286,12 +304,15 @@ def send_status(message):
         cpu_usage = psutil.cpu_percent(interval=1)
         ram = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
+        usage = stream_runner.get_token_usage(message.chat.id)
         
         status_text = (
             "📊 <b>Status Server & AI Engine</b>\n\n"
             f"💻 <b>CPU Usage:</b> {cpu_usage}%\n"
             f"🧠 <b>RAM Usage:</b> {ram.percent}% ({ram.used // (1024**2)} MB / {ram.total // (1024**2)} MB)\n"
             f"💾 <b>Disk Usage:</b> {disk.percent}% ({disk.used // (1024**3)} GB / {disk.total // (1024**3)} GB)\n"
+            f"📈 <b>Sesi Token Usage:</b> {usage['session_tokens']:,} Tokens\n"
+            f"📊 <b>Total Token Usage:</b> {usage['total_tokens']:,} Tokens\n"
             f"🚀 <b>AGY Path:</b> <code>{config.AGY_PATH}</code>\n"
             f"📂 <b>Workspace:</b> <code>{current_workspace}</code>"
         )
@@ -330,7 +351,7 @@ def process_custom_agent_prompt(message, prompt, status_text, runner_func):
                     pass
 
         try:
-            response = runner_func(prompt, message.chat.id, current_workspace, progress_callback=update_progress)
+            response, turn_usage = runner_func(prompt, message.chat.id, current_workspace, progress_callback=update_progress)
             
             stop_typing.set()
             typing_thread.join(timeout=1)
@@ -341,7 +362,16 @@ def process_custom_agent_prompt(message, prompt, status_text, runner_func):
                 except Exception:
                     pass
 
-            send_long_message(message.chat.id, response)
+            # Append Token Usage Badge at the end of response
+            final_output = response
+            if turn_usage and turn_usage.get("total_tokens"):
+                tot = turn_usage["total_tokens"]
+                inp = turn_usage.get("input_tokens", 0)
+                out = turn_usage.get("output_tokens", 0)
+                usage_badge = f"\n\n───────────────\n📊 <b>Token Used:</b> {tot:,} <i>(In: {inp:,} | Out: {out:,})</i>"
+                final_output += usage_badge
+
+            send_long_message(message.chat.id, final_output)
 
         except Exception as e:
             stop_typing.set()
@@ -353,7 +383,7 @@ def process_custom_agent_prompt(message, prompt, status_text, runner_func):
 
 
 if __name__ == "__main__":
-    print("🚀 Starting Antigravity AI Agent Bot with Session Transcript Rendering...")
+    print("🚀 Starting Antigravity AI Agent Bot with Token Usage & Limit Tracking...")
     print(f"📂 Default Workspace Dir: {config.DEFAULT_WORKSPACE}")
     print(f"🔒 Allowed User IDs: {config.ALLOWED_USER_IDS}")
     print("🤖 Bot is polling for messages...")

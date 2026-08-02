@@ -8,6 +8,13 @@ from datetime import datetime
 import config
 
 active_conversations = {}
+chat_token_usage = {}  # chat_id -> {'session_tokens': 0, 'total_tokens': 0}
+
+
+def get_token_usage(chat_id: int):
+    if chat_id not in chat_token_usage:
+        chat_token_usage[chat_id] = {'session_tokens': 0, 'total_tokens': 0}
+    return chat_token_usage[chat_id]
 
 
 def get_recent_sessions(limit=5):
@@ -113,7 +120,6 @@ def get_session_transcript_preview(conv_id: str, max_turns: int = 3) -> str:
             u_text = turn["user"][:250] + ("..." if len(turn["user"]) > 250 else "")
             a_text = turn["ai"][:250] + ("..." if len(turn["ai"]) > 250 else "")
 
-            # Clean any unescaped tags for HTML safety
             u_clean = u_text.replace("<", "&lt;").replace(">", "&gt;")
             a_clean = a_text.replace("<", "&lt;").replace(">", "&gt;")
 
@@ -128,10 +134,10 @@ def get_session_transcript_preview(conv_id: str, max_turns: int = 3) -> str:
         return f"📜 Error membaca riwayat: {str(e)}"
 
 
-def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progress_callback=None) -> str:
-    """Runs agy with stream-json, feeding real-time updates back to Telegram"""
+def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progress_callback=None) -> tuple:
+    """Runs agy with stream-json, feeding real-time updates and returning (response, usage_dict)"""
     if not os.path.exists(config.AGY_PATH):
-        return f"❌ Executable agy tidak ditemukan di <code>{config.AGY_PATH}</code>"
+        return f"❌ Executable agy tidak ditemukan di <code>{config.AGY_PATH}</code>", {}
 
     cwd = workspace_dir or config.DEFAULT_WORKSPACE
     os.makedirs(cwd, exist_ok=True)
@@ -162,6 +168,7 @@ def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progre
         final_response = ""
         last_update_time = 0
         current_activities = []
+        turn_usage = {}
 
         for line in iter(process.stdout.readline, ''):
             line = line.strip()
@@ -181,6 +188,10 @@ def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progre
                     step = data.get("step_update", {})
                     step_type = step.get("step_type", "")
                     
+                    # Extract usage if present in step
+                    if step.get("usage"):
+                        turn_usage = step.get("usage")
+
                     tool_call = step.get("tool_call") or step.get("tool") or {}
                     tool_name = tool_call.get("name", step_type)
                     args = tool_call.get("args", {})
@@ -200,6 +211,8 @@ def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progre
                 elif event_type == "result":
                     res = data.get("result", {})
                     final_response = res.get("response", "")
+                    if res.get("usage"):
+                        turn_usage = res.get("usage")
 
             except json.JSONDecodeError:
                 pass
@@ -210,13 +223,21 @@ def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progre
         if not active_conversations.get(chat_id):
             active_conversations[chat_id] = True
 
-        return final_response if final_response else "✅ Tugas selesai."
+        # Accumulate token usage stats
+        usage_stats = get_token_usage(chat_id)
+        if turn_usage and turn_usage.get("total_tokens"):
+            t_tok = turn_usage["total_tokens"]
+            usage_stats['session_tokens'] += t_tok
+            usage_stats['total_tokens'] += t_tok
+
+        resp_text = final_response if final_response else "✅ Tugas selesai."
+        return resp_text, turn_usage
 
     except Exception as e:
-        return f"❌ <b>Gagal menjalankan Antigravity:</b> {str(e)}"
+        return f"❌ <b>Gagal menjalankan Antigravity:</b> {str(e)}", {}
 
 
-def run_smash_stream(prompt: str, chat_id: int, workspace_dir: str, progress_callback=None) -> str:
+def run_smash_stream(prompt: str, chat_id: int, workspace_dir: str, progress_callback=None) -> tuple:
     smash_prompt = (
         "💥 SMASH MODE INSTRUCTION: Complete the following task with maximum effort, thoroughness, and speed. "
         "Fix all bugs, resolve any broken code/tests, build the project, and do not stop until everything runs 100% cleanly:\n\n"
@@ -225,14 +246,17 @@ def run_smash_stream(prompt: str, chat_id: int, workspace_dir: str, progress_cal
     return run_antigravity_stream(smash_prompt, chat_id, workspace_dir, progress_callback)
 
 
-def resume_stream(prompt: str, chat_id: int, workspace_dir: str, progress_callback=None) -> str:
+def resume_stream(prompt: str, chat_id: int, workspace_dir: str, progress_callback=None) -> tuple:
     resume_prompt = prompt if prompt else "Lanjutkan pekerjaan dan konteks dari poin terakhir yang belum selesai."
     return run_antigravity_stream(resume_prompt, chat_id, workspace_dir, progress_callback)
 
 
 def set_active_session(chat_id: int, conv_id: str):
     active_conversations[chat_id] = conv_id
+    # Reset session tokens counter for new/selected session
+    get_token_usage(chat_id)['session_tokens'] = 0
 
 
 def reset_session(chat_id: int):
     active_conversations.pop(chat_id, None)
+    get_token_usage(chat_id)['session_tokens'] = 0
