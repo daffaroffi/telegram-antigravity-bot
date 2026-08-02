@@ -12,6 +12,7 @@ from telebot import types
 import config
 import agent_runner
 import stream_runner
+import formatter
 
 if not config.validate_config():
     print("Please configure .env before starting the bot.")
@@ -129,15 +130,6 @@ def send_long_message(chat_id, text):
                 print(f"[ERROR] Failed to send chunk: {e}")
 
 
-def sanitize_telegram_html(text: str) -> str:
-    """Escapes unsupported HTML tags while preserving standard HTML tags"""
-    if not text:
-        return ""
-    allowed_tags = r'b|i|u|s|code|pre|a|em|strong'
-    pattern = rf'<(?!/?(?:{allowed_tags})\b)[^>]+>'
-    return re.sub(pattern, lambda m: m.group(0).replace('<', '&lt;').replace('>', '&gt;'), text)
-
-
 def keep_typing_alive(chat_id, stop_event):
     """Sends 'typing' chat action every 4 seconds to maintain Telegram UI status"""
     while not stop_event.is_set():
@@ -152,8 +144,8 @@ def keep_typing_alive(chat_id, stop_event):
 @check_auth
 def send_welcome(message):
     help_text = (
-        "🧠 <b>Antigravity AI Agent Bot (5-Recent Message Restoration)</b>\n\n"
-        "Selamat datang! Kamu memiliki akses penuh ke Antigravity AI dari Telegram dengan pemuatan 5 pesan riwayat obrolan terbaru saat berpindah sesi.\n\n"
+        "🧠 <b>Antigravity AI Agent Bot (Telegram Rich Text Enabled)</b>\n\n"
+        "Selamat datang! Output balasan dari AI diproses secara khusus menggunakan **Telegram Rich Text Formatting** (Syntax Highlighting, Expandable Blockquotes, & Styled Markdown).\n\n"
         "<b>Perintah Slash Keren:</b>\n"
         "📜 <code>/sessions</code> - Lihat & pilih riwayat sesi percakapan\n"
         "✏️ <code>/rename nama_baru</code> - Ubah nama/judul sesi percakapan aktif\n"
@@ -323,7 +315,7 @@ def handle_session_selection(call):
                     send_long_message(call.message.chat.id, f"👤 <b>User (#{i}):</b>\n{u_clean}")
                     
                 if ai_msg:
-                    a_clean = sanitize_telegram_html(ai_msg)
+                    a_clean = formatter.markdown_to_telegram_html(ai_msg)
                     send_long_message(call.message.chat.id, f"🤖 <b>Antigravity AI (#{i}):</b>\n{a_clean}")
                     
                 time.sleep(0.2)
@@ -462,7 +454,10 @@ def process_custom_agent_prompt(message, prompt, status_text, runner_func):
                 except Exception:
                     pass
 
-            final_output = response
+            # Format AI response with rich Telegram HTML
+            formatted_response = formatter.markdown_to_telegram_html(response)
+
+            final_output = formatted_response
             if turn_usage and turn_usage.get("total_tokens"):
                 tot = turn_usage["total_tokens"]
                 inp = turn_usage.get("input_tokens", 0)
@@ -482,7 +477,7 @@ def process_custom_agent_prompt(message, prompt, status_text, runner_func):
 
 
 if __name__ == "__main__":
-    print("🚀 Starting Antigravity AI Agent Bot with 5-Recent Messages Limit...")
+    print("🚀 Starting Antigravity AI Agent Bot with Telegram Rich Text Formatting...")
     print(f"📂 Default Workspace Dir: {config.DEFAULT_WORKSPACE}")
     print(f"🔒 Allowed User IDs: {config.ALLOWED_USER_IDS}")
     print("🤖 Bot is polling for messages...")

@@ -1,26 +1,24 @@
-from formatter import markdown_to_telegram_html, split_telegram_html
+from formatter import markdown_to_telegram_html
 
-def test_edge_cases():
-    test_cases = [
-        # Edge case 1: Multiple links
-        "Check [Google](https://google.com) and [GitHub](https://github.com)",
-        # Edge case 2: Raw code with HTML tags
-        "```html\n<div class='main'>Content & 'quotes'</div>\n```",
-        # Edge case 3: Mixed formatting
-        "**Bold** with `inline_code` and *italic* and ~~strike~~ in one line",
-        # Edge case 4: Long expandable blockquote
-        "> " + "This is a very long blockquote sentence. " * 10,
-        # Edge case 5: Unclosed code block
-        "Text before\n```python\nprint('hello')\n```\nText after"
-    ]
+sample_markdown = """
+# Judul Utama Project
+Berikut adalah penjelasan singkat mengenai **fitur rich text** di Telegram.
 
-    for idx, tc in enumerate(test_cases, 1):
-        print(f"=== TEST CASE {idx} ===")
-        out = markdown_to_telegram_html(tc)
-        print(out)
-        chunks = split_telegram_html(out, max_length=150)
-        print(f"Chunks: {len(chunks)}")
-        print()
+## Kode Python Contoh:
+```python
+def hitung(a, b):
+    # Mengembalikan hasil penjumlahan
+    return a + b
+```
 
-if __name__ == "__main__":
-    test_edge_cases()
+> Ini adalah kutipan penjelasan panjang yang bisa di-expand (collapsible blockquote) di Telegram chat!
+> Sangat rapi dan tidak memenuhi layar.
+
+### Fitur Lainnya:
+* Penggunaan `inline code` untuk nama variabel.
+* Format *italic* dan **bold** otomatis.
+"""
+
+result = markdown_to_telegram_html(sample_markdown)
+print("=== RESULT TELEGRAM HTML ===")
+print(result)
