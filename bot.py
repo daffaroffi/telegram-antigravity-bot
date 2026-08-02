@@ -11,6 +11,7 @@ from telebot import types
 import config
 import agent_runner
 import stream_runner
+import formatter
 
 if not config.validate_config():
     print("Please configure .env before starting the bot.")
@@ -104,22 +105,23 @@ def check_auth_callback(func):
     return wrapper
 
 
-def send_long_message(chat_id, text):
-    """Splits and sends messages that exceed Telegram's 4096 character limit"""
-    max_length = 4000
-    if len(text) <= max_length:
-        try:
-            bot.send_message(chat_id, text, parse_mode="HTML")
-        except Exception:
-            bot.send_message(chat_id, text, parse_mode=None)
-        return
+def send_long_message(chat_id, text, parse_markdown=True):
+    """Splits and sends messages that exceed Telegram's 4096 character limit using Telegram Rich Text HTML formatting"""
+    if parse_markdown:
+        formatted_text = formatter.markdown_to_telegram_html(text)
+    else:
+        formatted_text = text
 
-    chunks = [text[i:i+max_length] for i in range(0, len(text), max_length)]
+    chunks = formatter.split_telegram_html(formatted_text, max_length=4000)
     for chunk in chunks:
         try:
             bot.send_message(chat_id, chunk, parse_mode="HTML")
-        except Exception:
-            bot.send_message(chat_id, chunk, parse_mode=None)
+        except Exception as e:
+            print(f"[WARNING] HTML parse error in send_message: {e}. Falling back to plain text.")
+            try:
+                bot.send_message(chat_id, chunk, parse_mode=None)
+            except Exception as e2:
+                print(f"[ERROR] Failed to send fallback message: {e2}")
 
 
 def keep_typing_alive(chat_id, stop_event):
@@ -298,24 +300,23 @@ def handle_session_selection(call):
         # Load and send ALL previous chat turns directly into Telegram!
         history_turns = agent_runner.get_full_session_history(conv_id)
         if history_turns:
-            send_long_message(call.message.chat.id, "📜 <b>--- RIWAYAT PERCAKAPAN LENGKAP DI-LOAD ---</b>")
+            send_long_message(call.message.chat.id, "📜 <b>--- RIWAYAT PERCAKAPAN LENGKAP DI-LOAD ---</b>", parse_markdown=False)
             for turn in history_turns:
                 user_msg = turn.get("user", "")
                 ai_msg = turn.get("ai", "")
                 
                 if user_msg:
-                    u_clean = user_msg.replace("<", "&lt;").replace(">", "&gt;")
-                    send_long_message(call.message.chat.id, f"👤 <b>User:</b>\n{u_clean}")
+                    send_long_message(call.message.chat.id, f"👤 **User:**\n{user_msg}", parse_markdown=True)
                     
                 if ai_msg:
-                    send_long_message(call.message.chat.id, f"🤖 <b>Antigravity AI:</b>\n{ai_msg}")
+                    send_long_message(call.message.chat.id, f"🤖 **Antigravity AI:**\n{ai_msg}", parse_markdown=True)
                     
         status_msg = (
             f"✅ <b>Sesi Percakapan Berhasil Di-Load Sepenuhnya!</b>\n"
             f"🆔 <b>ID Sesi:</b> <code>{conv_id}</code>\n\n"
             f"Seluruh riwayat obrolan di atas telah di-load kembali ke ruang chat. Pesan kamu selanjutnya akan melanjutkan sesi percakapan ini."
         )
-        send_long_message(call.message.chat.id, status_msg)
+        send_long_message(call.message.chat.id, status_msg, parse_markdown=False)
 
 
 @bot.message_handler(commands=['smash'])

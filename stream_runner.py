@@ -8,7 +8,31 @@ import threading
 from datetime import datetime
 import config
 
-active_conversations = {}
+SESSION_FILE = os.path.join(os.path.dirname(__file__), "sessions.json")
+
+
+def load_active_conversations():
+    """Loads active conversation mapping from persistent disk storage"""
+    if os.path.exists(SESSION_FILE):
+        try:
+            with open(SESSION_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return {int(k): v for k, v in data.items()}
+        except Exception as e:
+            print(f"[ERROR] Loading sessions.json: {e}")
+    return {}
+
+
+def save_active_conversations():
+    """Saves active conversation mapping to persistent disk storage"""
+    try:
+        with open(SESSION_FILE, "w", encoding="utf-8") as f:
+            json.dump({str(k): v for k, v in active_conversations.items()}, f, indent=2)
+    except Exception as e:
+        print(f"[ERROR] Saving sessions.json: {e}")
+
+
+active_conversations = load_active_conversations()
 chat_token_usage = {}  # chat_id -> {'session_tokens': 0, 'total_tokens': 0}
 
 
@@ -181,7 +205,7 @@ def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progre
     ]
 
     conv_target = active_conversations.get(chat_id)
-    if isinstance(conv_target, str):
+    if isinstance(conv_target, str) and conv_target:
         cmd.extend(["--conversation", conv_target])
     elif conv_target is True:
         cmd.append("-c")
@@ -214,6 +238,7 @@ def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progre
                     conv_id = data.get("conversation_id")
                     if conv_id:
                         active_conversations[chat_id] = conv_id
+                        save_active_conversations()
 
                 elif event_type == "step_update":
                     step = data.get("step_update", {})
@@ -252,6 +277,7 @@ def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progre
 
         if not active_conversations.get(chat_id):
             active_conversations[chat_id] = True
+            save_active_conversations()
 
         usage_stats = get_token_usage(chat_id)
         if turn_usage and turn_usage.get("total_tokens"):
@@ -282,9 +308,11 @@ def resume_stream(prompt: str, chat_id: int, workspace_dir: str, progress_callba
 
 def set_active_session(chat_id: int, conv_id: str):
     active_conversations[chat_id] = conv_id
+    save_active_conversations()
     get_token_usage(chat_id)['session_tokens'] = 0
 
 
 def reset_session(chat_id: int):
     active_conversations.pop(chat_id, None)
+    save_active_conversations()
     get_token_usage(chat_id)['session_tokens'] = 0
