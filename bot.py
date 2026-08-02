@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import functools
 import traceback
 import threading
@@ -105,13 +106,16 @@ def check_auth_callback(func):
 
 
 def send_long_message(chat_id, text):
-    """Splits and sends messages that exceed Telegram's 4096 character limit"""
+    """Splits and sends messages that exceed Telegram's 4096 character limit with safe HTML fallback"""
     max_length = 4000
     if len(text) <= max_length:
         try:
             bot.send_message(chat_id, text, parse_mode="HTML")
         except Exception:
-            bot.send_message(chat_id, text, parse_mode=None)
+            try:
+                bot.send_message(chat_id, text, parse_mode=None)
+            except Exception as e:
+                print(f"[ERROR] Failed to send message: {e}")
         return
 
     chunks = [text[i:i+max_length] for i in range(0, len(text), max_length)]
@@ -119,7 +123,20 @@ def send_long_message(chat_id, text):
         try:
             bot.send_message(chat_id, chunk, parse_mode="HTML")
         except Exception:
-            bot.send_message(chat_id, chunk, parse_mode=None)
+            try:
+                bot.send_message(chat_id, chunk, parse_mode=None)
+            except Exception as e:
+                print(f"[ERROR] Failed to send chunk: {e}")
+
+
+def sanitize_telegram_html(text: str) -> str:
+    """Escapes unsupported HTML tags while preserving standard HTML tags"""
+    if not text:
+        return ""
+    # Convert unsupported tags to &lt;tag&gt;
+    allowed_tags = r'b|i|u|s|code|pre|a|em|strong'
+    pattern = rf'<(?!/?(?:{allowed_tags})\b)[^>]+>'
+    return re.sub(pattern, lambda m: m.group(0).replace('<', '&lt;').replace('>', '&gt;'), text)
 
 
 def keep_typing_alive(chat_id, stop_event):
@@ -136,7 +153,7 @@ def keep_typing_alive(chat_id, stop_event):
 @check_auth
 def send_welcome(message):
     help_text = (
-        "🧠 <b>Antigravity AI Agent Bot (Full Session Restoration)</b>\n\n"
+        "🧠 <b>Antigravity AI Agent Bot (Robust Transcript Restoration)</b>\n\n"
         "Selamat datang! Kamu memiliki akses penuh ke Antigravity AI dari Telegram dengan pemuatan riwayat obrolan lengkap saat berpindah sesi.\n\n"
         "<b>Perintah Slash Keren:</b>\n"
         "📜 <code>/sessions</code> - Lihat & pilih riwayat sesi percakapan\n"
@@ -145,7 +162,7 @@ def send_welcome(message):
         "📊 <code>/usage</code> - Cek penggunaan Token & statistik Limit\n"
         "▶️ <code>/resume [instruksi]</code> - Pilih atau lanjutkan sesi percakapan terakhir\n"
         "💥 <code>/smash deskripsi</code> - Mode Hantam Bug & Force Fix sampai tuntas!\n"
-        "🔄 <code>/new</code> - Reset & mulai sesi obrolan baru\n"
+        "🔄 <code>/new</code> - Reset & mulai sesi AI baru\n"
         "🎯 <code>/goal deskripsi</code> - Eksekusi tugas / goal khusus\n"
         "📋 <code>/plan deskripsi</code> - Aktifkan mode perencanaan (Plan Mode)\n"
         "📂 <code>/workspace [path]</code> - Ubah direktori kerja AI\n"
@@ -302,18 +319,15 @@ def handle_session_selection(call):
                 user_msg = turn.get("user", "")
                 ai_msg = turn.get("ai", "")
                 
-                msg_parts = []
                 if user_msg:
                     u_clean = user_msg.replace("<", "&lt;").replace(">", "&gt;")
-                    msg_parts.append(f"👤 <b>User (#{i}):</b>\n{u_clean}")
+                    send_long_message(call.message.chat.id, f"👤 <b>User (#{i}):</b>\n{u_clean}")
                     
                 if ai_msg:
-                    msg_parts.append(f"🤖 <b>Antigravity AI (#{i}):</b>\n{ai_msg}")
+                    a_clean = sanitize_telegram_html(ai_msg)
+                    send_long_message(call.message.chat.id, f"🤖 <b>Antigravity AI (#{i}):</b>\n{a_clean}")
                     
-                if msg_parts:
-                    turn_text = "\n\n".join(msg_parts)
-                    send_long_message(call.message.chat.id, turn_text)
-                    time.sleep(0.2)
+                time.sleep(0.2)
                     
         status_msg = (
             f"✅ <b>Sesi Percakapan Berhasil Di-Load Sepenuhnya!</b>\n"
@@ -469,7 +483,7 @@ def process_custom_agent_prompt(message, prompt, status_text, runner_func):
 
 
 if __name__ == "__main__":
-    print("🚀 Starting Antigravity AI Agent Bot with Robust Transcript Rendering...")
+    print("🚀 Starting Antigravity AI Agent Bot with Sanitized Telegram HTML Fallback...")
     print(f"📂 Default Workspace Dir: {config.DEFAULT_WORKSPACE}")
     print(f"🔒 Allowed User IDs: {config.ALLOWED_USER_IDS}")
     print("🤖 Bot is polling for messages...")
