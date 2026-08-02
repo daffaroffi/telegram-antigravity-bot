@@ -133,7 +133,6 @@ def sanitize_telegram_html(text: str) -> str:
     """Escapes unsupported HTML tags while preserving standard HTML tags"""
     if not text:
         return ""
-    # Convert unsupported tags to &lt;tag&gt;
     allowed_tags = r'b|i|u|s|code|pre|a|em|strong'
     pattern = rf'<(?!/?(?:{allowed_tags})\b)[^>]+>'
     return re.sub(pattern, lambda m: m.group(0).replace('<', '&lt;').replace('>', '&gt;'), text)
@@ -153,8 +152,8 @@ def keep_typing_alive(chat_id, stop_event):
 @check_auth
 def send_welcome(message):
     help_text = (
-        "🧠 <b>Antigravity AI Agent Bot (Robust Transcript Restoration)</b>\n\n"
-        "Selamat datang! Kamu memiliki akses penuh ke Antigravity AI dari Telegram dengan pemuatan riwayat obrolan lengkap saat berpindah sesi.\n\n"
+        "🧠 <b>Antigravity AI Agent Bot (5-Recent Message Restoration)</b>\n\n"
+        "Selamat datang! Kamu memiliki akses penuh ke Antigravity AI dari Telegram dengan pemuatan 5 pesan riwayat obrolan terbaru saat berpindah sesi.\n\n"
         "<b>Perintah Slash Keren:</b>\n"
         "📜 <code>/sessions</code> - Lihat & pilih riwayat sesi percakapan\n"
         "✏️ <code>/rename nama_baru</code> - Ubah nama/judul sesi percakapan aktif\n"
@@ -304,17 +303,17 @@ def handle_session_selection(call):
         )
     else:
         agent_runner.set_active_session(call.message.chat.id, conv_id)
-        bot.answer_callback_query(call.id, "Memuat seluruh riwayat percakapan...")
+        bot.answer_callback_query(call.id, "Memuat 5 obrolan terbaru...")
         
         bot.edit_message_text(
-            f"🔄 <b>Memuat seluruh riwayat percakapan untuk sesi:</b> <code>{conv_id[:8]}...</code>",
+            f"🔄 <b>Memuat 5 obrolan terbaru untuk sesi:</b> <code>{conv_id[:8]}...</code>",
             call.message.chat.id,
             call.message.message_id
         )
         
-        history_turns = agent_runner.get_full_session_history_formatted(conv_id)
+        history_turns = agent_runner.get_full_session_history_formatted(conv_id, max_turns=5)
         if history_turns:
-            send_long_message(call.message.chat.id, f"📜 <b>--- RIWAYAT PERCAKAPAN LENGKAP ({len(history_turns)} Pesan) ---</b>")
+            send_long_message(call.message.chat.id, f"📜 <b>--- 5 OBROLAN TERBARU SESI DILOCK ---</b>")
             for i, turn in enumerate(history_turns, 1):
                 user_msg = turn.get("user", "")
                 ai_msg = turn.get("ai", "")
@@ -330,9 +329,9 @@ def handle_session_selection(call):
                 time.sleep(0.2)
                     
         status_msg = (
-            f"✅ <b>Sesi Percakapan Berhasil Di-Load Sepenuhnya!</b>\n"
+            f"✅ <b>Sesi Percakapan Berhasil Di-Load!</b>\n"
             f"🆔 <b>ID Sesi:</b> <code>{conv_id}</code>\n\n"
-            f"Seluruh riwayat obrolan di atas telah di-load kembali ke ruang chat. Pesan kamu selanjutnya akan melanjutkan sesi percakapan ini."
+            f"5 obrolan terbaru di atas telah di-load ke ruang chat. Pesan kamu selanjutnya akan melanjutkan sesi percakapan ini."
         )
         send_long_message(call.message.chat.id, status_msg)
 
@@ -483,7 +482,7 @@ def process_custom_agent_prompt(message, prompt, status_text, runner_func):
 
 
 if __name__ == "__main__":
-    print("🚀 Starting Antigravity AI Agent Bot with Sanitized Telegram HTML Fallback...")
+    print("🚀 Starting Antigravity AI Agent Bot with 5-Recent Messages Limit...")
     print(f"📂 Default Workspace Dir: {config.DEFAULT_WORKSPACE}")
     print(f"🔒 Allowed User IDs: {config.ALLOWED_USER_IDS}")
     print("🤖 Bot is polling for messages...")
