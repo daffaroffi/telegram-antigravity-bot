@@ -1,32 +1,51 @@
-# 🧠 Antigravity AI Agent Telegram Bot
+# 🧠 Antigravity AI Agent Telegram Bot Engine
 
-Kendalikan seluruh server, pengerjaan kodingan, debugging, dan proyek pengembangan kamu secara langsung melalui chat Telegram dengan kecerdasan AI Antigravity.
+Control your Linux server, coding execution, bug fixes, and development workflows remotely via Telegram powered by Google Antigravity AI CLI (gy).
+
+## 🌟 Key Features
+
+- **🤖 Remote AI Coding Agent**: Execute complex coding tasks, refactoring, and multi-file debugging directly from Telegram.
+- **▶️ Seamless Session Resumption**: Resume conversation sessions (/resume) without cluttering chat context.
+- **📱 Persistent Quick Menu**: Interactive bottom keyboard buttons (💬 Active Session, ▶️ Resume / Session, 🔄 New Session, 📂 Workspace, 📊 System & Usage, ❓ Help).
+- **📂 Interactive Workspace Picker**: Switch server working directories instantly via 1-tap inline buttons.
+- **📊 Realtime Token & System Health**: Monitor token consumption, RAM usage, CPU load, and disk metrics.
+- **🛡️ Authorized Security**: Strict access control matching pre-configured Telegram User IDs via environment variables.
+
+## 🛠️ Tech Stack
+
+- **Python 3.12** / pyTelegramBotAPI (	elebot)
+- **Antigravity CLI** (gy) Integration & Stream Runner
+- **python-dotenv** (Environment Management)
+- **Systemd Service** (24/7 Automated Linux Background Runner)
+
+## 🚀 Quick Setup
+
+1. **Clone Repository**:
+   `ash
+   git clone https://github.com/daffaroffi/antigravity-telegram-bot.git
+   cd antigravity-telegram-bot
+   `
+
+2. **Configure Environment Variables**:
+   Copy .env.example to .env:
+   `ash
+   cp .env.example .env
+   `
+   Edit .env:
+   `env
+   TELEGRAM_BOT_TOKEN= your_bot_token_here
+   ALLOWED_USER_IDS=8927082329
+   AGY_PATH=/root/.local/bin/agy
+   DEFAULT_WORKSPACE=/root/my-project
+   `
+
+3. **Install Dependencies & Run**:
+   `ash
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   python bot.py
+   `
 
 ---
-
-## 🌟 Fitur Utama
-- 🤖 **Kendalikan Antigravity AI dari Telegram**: Kirim instruksi kodingan, perbaikan bug, atau buat project baru dari mana saja via HP/Laptop.
-- 💬 **Sesi Percakapan Berkelanjutan**: Mengingat riwayat percakapan secara otomatis (Gunakan `/new` untuk mulai dari awal).
-- 📂 **Flexible Workspace**: Ubah lokasi kerja AI di server secara dinamis dengan `/workspace /path/tujuan`.
-- 📊 **Monitoring Server**: Cek beban CPU, RAM, Disk, dan status executable `agy`.
-- 🔒 **Sistem Keamanan Strict**: Hanya akun Telegram milikmu (`ALLOWED_USER_IDS`) yang dapat mengendalikan server.
-
----
-
-## 🚀 Panduan Penggunaan Perintah
-| Perintah | Deskripsi |
-|---|---|
-| `/start` atau `/help` | Menampilkan menu bantuan utama |
-| `/new` atau `/reset` | Memulai sesi obrolan AI baru dari awal |
-| `/workspace [path]` | Mengubah direktori kerja AI di server |
-| `/status` | Cek status RAM, Disk, CPU & lokasi `agy` |
-
----
-
-## 🏃 Menjalankan Service 24 Jam
-
-Disiapkan sebagai Service Systemd Linux:
-```bash
-systemctl status antigravity-bot
-systemctl restart antigravity-bot
-```
+***REMOVED***

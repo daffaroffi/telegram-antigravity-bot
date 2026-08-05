@@ -5,40 +5,95 @@ import re
 import shutil
 import time
 import threading
-import queue
-from datetime import datetime
+import base64
+import urllib.request
+import urllib.error
+from datetime import datetime, timezone
 import config
 
 SESSION_FILE = os.path.join(os.path.dirname(__file__), "sessions.json")
 
+active_conversations = {}
+active_workspaces = {}
+active_settings = {}   # chat_id -> {'model': ..., 'effort': ..., 'mode': ...}
+chat_token_usage = {}  # chat_id -> {'session_tokens': 0, 'total_tokens': 0}
+active_processes = {}  # chat_id -> subprocess.Popen instance
 
-def load_active_conversations():
-    """Loads active conversation mapping from persistent disk storage"""
+# Per-chat task queue and lock to prevent concurrent process collisions
+chat_locks = {}
+
+SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+
+def load_persistent_sessions():
+    """Loads active conversation mapping, workspaces, and chat settings from persistent disk storage"""
+    global active_conversations, active_workspaces, active_settings
     if os.path.exists(SESSION_FILE):
         try:
             with open(SESSION_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return {int(k): v for k, v in data.items()}
+                convs = data.get("conversations", {})
+                workspaces = data.get("workspaces", {})
+                settings = data.get("settings", {})
+                if not convs and not workspaces and isinstance(data, dict):
+                    convs = data
+                
+                active_conversations = {int(k): v for k, v in convs.items()}
+                active_workspaces = {int(k): v for k, v in workspaces.items()}
+                active_settings = {int(k): v for k, v in settings.items()}
+                return
         except Exception as e:
             print(f"[ERROR] Loading sessions.json: {e}")
-    return {}
+    active_conversations = {}
+    active_workspaces = {}
+    active_settings = {}
 
 
-def save_active_conversations():
-    """Saves active conversation mapping to persistent disk storage"""
+def save_persistent_sessions():
+    """Saves active conversation mapping, workspaces, and settings to persistent disk storage"""
     try:
+        data = {
+            "conversations": {str(k): v for k, v in active_conversations.items()},
+            "workspaces": {str(k): v for k, v in active_workspaces.items()},
+            "settings": {str(k): v for k, v in active_settings.items()}
+        }
         with open(SESSION_FILE, "w", encoding="utf-8") as f:
-            json.dump({str(k): v for k, v in active_conversations.items()}, f, indent=2)
+            json.dump(data, f, indent=2)
     except Exception as e:
         print(f"[ERROR] Saving sessions.json: {e}")
 
 
-active_conversations = load_active_conversations()
-chat_token_usage = {}  # chat_id -> {'session_tokens': 0, 'total_tokens': 0}
+load_persistent_sessions()
 
-# Per-chat task queue and lock to prevent concurrent process collisions
-chat_locks = {}
-chat_queues = {}
+
+def get_chat_setting(chat_id: int, key: str, default=None):
+    if chat_id not in active_settings:
+        active_settings[chat_id] = {
+            "model": config.DEFAULT_MODEL,
+            "effort": config.DEFAULT_EFFORT,
+            "mode": config.DEFAULT_MODE
+        }
+    return active_settings[chat_id].get(key, default)
+
+
+def set_chat_setting(chat_id: int, key: str, value: str):
+    if chat_id not in active_settings:
+        active_settings[chat_id] = {
+            "model": config.DEFAULT_MODEL,
+            "effort": config.DEFAULT_EFFORT,
+            "mode": config.DEFAULT_MODE
+        }
+    active_settings[chat_id][key] = value
+    save_persistent_sessions()
+
+
+def get_chat_workspace(chat_id: int) -> str:
+    return active_workspaces.get(chat_id) or config.DEFAULT_WORKSPACE
+
+
+def set_chat_workspace(chat_id: int, workspace_path: str):
+    active_workspaces[chat_id] = os.path.abspath(workspace_path)
+    save_persistent_sessions()
 
 
 def get_chat_lock(chat_id: int):
@@ -50,7 +105,211 @@ def get_chat_lock(chat_id: int):
 def get_token_usage(chat_id: int):
     if chat_id not in chat_token_usage:
         chat_token_usage[chat_id] = {'session_tokens': 0, 'total_tokens': 0}
+    
+    conv_id = active_conversations.get(chat_id)
+    if isinstance(conv_id, str) and conv_id and chat_token_usage[chat_id]['session_tokens'] == 0:
+        chat_token_usage[chat_id]['session_tokens'] = calculate_session_tokens(conv_id)
+
     return chat_token_usage[chat_id]
+
+
+def calculate_session_tokens(conv_id: str) -> int:
+    """Calculates total tokens accumulated in a conversation session from transcript.jsonl"""
+    transcript_file = os.path.join("/root/.gemini/antigravity-cli/brain", conv_id, ".system_generated", "logs", "transcript.jsonl")
+    if not os.path.exists(transcript_file):
+        return 0
+
+    total_tokens = 0
+    try:
+        with open(transcript_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                try:
+                    data = json.loads(line)
+                    if data.get("type") == "PLANNER_RESPONSE":
+                        usage = data.get("usage")
+                        if isinstance(usage, dict) and "total_tokens" in usage:
+                            total_tokens += usage.get("total_tokens", 0)
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"[ERROR] Failed to calculate session tokens: {e}")
+    return total_tokens
+
+
+def make_ascii_bar(pct: float, length: int = 20) -> str:
+    filled = int(round(length * pct / 100))
+    filled = max(0, min(length, filled))
+    return "█" * filled + "░" * (length - filled)
+
+
+def parse_reset_time(iso_str: str) -> str:
+    if not iso_str:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        diff = dt - now
+        secs = int(diff.total_seconds())
+        if secs <= 0:
+            return "Refreshes soon"
+        hours = secs // 3600
+        mins = (secs % 3600) // 60
+        if hours > 24:
+            days = hours // 24
+            h = hours % 24
+            return f"Refreshes in {days}d {h}h"
+        elif hours > 0:
+            return f"Refreshes in {hours}h {mins}m"
+        else:
+            return f"Refreshes in {mins}m"
+    except Exception:
+        return ""
+
+
+def fetch_live_user_quota_summary() -> str:
+    """Fetches real-time Models & Quota summary directly from Google Cloud Code PA API"""
+    token_file = "/root/.gemini/antigravity-cli/antigravity-oauth-token"
+    if not os.path.exists(token_file):
+        return "⚠️ <b>File token OAuth tidak ditemukan di server.</b>"
+
+    try:
+        with open(token_file, 'r', encoding='utf-8') as f:
+            token_data = json.load(f)
+
+        access_token = token_data.get('token', {}).get('access_token')
+        id_token = token_data.get('id_token', '')
+
+        if not access_token:
+            return "⚠️ <b>Access token OAuth tidak valid.</b>"
+
+        email = "daffaventure@gmail.com"
+        if id_token and '.' in id_token:
+            try:
+                payload_b64 = id_token.split('.')[1]
+                payload_b64 += '=' * (-len(payload_b64) % 4)
+                payload = json.loads(base64.b64decode(payload_b64).decode('utf-8'))
+                email = payload.get('email', email)
+            except Exception:
+                pass
+
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json',
+            'User-Agent': 'antigravity-cli/1.1.9'
+        }
+
+        url = 'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary'
+        req = urllib.request.Request(url, data=b'{}', headers=headers, method='POST')
+
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+
+        output = []
+        output.append("└ <b>Models & Quota</b>")
+        output.append(f"  <b>Account:</b> <code>{email}</code>\n")
+
+        for group in data.get('groups', []):
+            g_name = group.get('displayName', '').upper()
+            g_desc = group.get('description', '')
+            output.append(f"<b>{g_name}</b>")
+            output.append(f"  <i>{g_desc}</i>\n")
+            
+            for bucket in group.get('buckets', []):
+                b_name = bucket.get('displayName', '')
+                disabled = bucket.get('disabled', False)
+                rem_frac = bucket.get('remainingFraction', 0.0)
+                pct = rem_frac * 100.0
+                bar = make_ascii_bar(pct)
+                reset_str = parse_reset_time(bucket.get('resetTime'))
+                b_desc = bucket.get('description', '')
+                
+                output.append(f"  <b>{b_name}</b>")
+                if disabled:
+                    output.append("    <code>[Disabled]</code>")
+                    output.append(f"    <i>{b_desc}</i>\n")
+                else:
+                    output.append(f"    <code>[{bar}] {pct:.2f}%</code>")
+                    output.append(f"    {pct:.0f}% remaining · {reset_str}\n")
+
+        return "\n".join(output)
+    except Exception as e:
+        return f"⚠️ <b>Gagal mengambil data kuota live:</b> <code>{str(e)}</code>"
+
+
+def fetch_available_models_live() -> list:
+    """Fetches list of active models directly from Google Cloud Code API"""
+    token_file = "/root/.gemini/antigravity-cli/antigravity-oauth-token"
+    if not os.path.exists(token_file):
+        return []
+
+    try:
+        with open(token_file, 'r', encoding='utf-8') as f:
+            token_data = json.load(f)
+
+        access_token = token_data.get('token', {}).get('access_token')
+        if not access_token:
+            return []
+
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json',
+            'User-Agent': 'antigravity-cli/1.1.9'
+        }
+
+        url = 'https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels'
+        req = urllib.request.Request(url, data=b'{}', headers=headers, method='POST')
+
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+
+        models = []
+        for m_id, m_info in data.get('models', {}).items():
+            disp = m_info.get('displayName')
+            if disp:
+                models.append({
+                    'id': m_id,
+                    'displayName': disp,
+                    'supportsThinking': m_info.get('supportsThinking', False),
+                    'recommended': m_info.get('recommended', False)
+                })
+
+        models.sort(key=lambda x: (not x['recommended'], x['displayName']))
+        return models
+    except Exception as e:
+        print(f"[ERROR] fetch_available_models_live: {e}")
+        return []
+
+
+def fetch_bot_logs(lines_count: int = 30) -> str:
+    """Fetches systemd service logs for antigravity-bot"""
+    try:
+        res = subprocess.run(
+            ["journalctl", "-u", "antigravity-bot", "-n", str(lines_count), "--no-pager"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if res.stdout:
+            return res.stdout
+        return "📜 Tidak ada log terbaru."
+    except Exception as e:
+        return f"❌ Gagal mengambil log: {e}"
+
+
+def cancel_chat_process(chat_id: int) -> bool:
+    """Cancels the active agy child process for a given chat_id"""
+    proc = active_processes.get(chat_id)
+    if proc and proc.poll() is None:
+        try:
+            proc.terminate()
+            time.sleep(0.5)
+            if proc.poll() is None:
+                proc.kill()
+            return True
+        except Exception as e:
+            print(f"[ERROR] Failed to kill process for chat {chat_id}: {e}")
+            return False
+    return False
 
 
 def get_recent_sessions(limit=10):
@@ -203,19 +462,36 @@ def get_full_session_history_formatted(conv_id: str, max_turns: int = 5) -> list
         return []
 
 
-def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progress_callback=None) -> tuple:
-    """Runs agy with stream-json in an isolated process group with chat lock guard"""
+def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str = None, progress_callback=None) -> tuple:
+    """Runs agy with stream-json propagating --model, --effort, and --mode flags with animated spinners"""
     if not os.path.exists(config.AGY_PATH):
-        return f"❌ Executable agy tidak ditemukan di <code>{config.AGY_PATH}</code>", {}
+        return f"❌ Executable agy tidak ditemukan di <code>{config.AGY_PATH}</code>", {}, []
 
     lock = get_chat_lock(chat_id)
     with lock:
-        cwd = workspace_dir or config.DEFAULT_WORKSPACE
+        cwd = workspace_dir or get_chat_workspace(chat_id)
         os.makedirs(cwd, exist_ok=True)
+
+        model = get_chat_setting(chat_id, "model", config.DEFAULT_MODEL)
+        effort = get_chat_setting(chat_id, "effort", config.DEFAULT_EFFORT)
+        mode = get_chat_setting(chat_id, "mode", config.DEFAULT_MODE)
+
+        persona_directive = getattr(config, "SYSTEM_PERSONA_PROMPT", "")
+        augmented_prompt = (
+            f"{persona_directive}\n\n"
+            f"[SYSTEM DIRECTIVE - TARGET WORKSPACE: {cwd}]\n"
+            f"Note: User active target workspace directory is strictly set to '{cwd}'. "
+            f"All relative paths, file scans, searches, reads, edits, and commands MUST take place inside '{cwd}'.\n\n"
+            f"{prompt}"
+        )
 
         cmd = [
             config.AGY_PATH,
-            "-p", prompt,
+            "-p", augmented_prompt,
+            "--add-dir", cwd,
+            "--model", model,
+            "--effort", effort,
+            "--mode", mode,
             "--output-format", "stream-json",
             "--dangerously-skip-permissions"
         ]
@@ -227,12 +503,11 @@ def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progre
             cmd.append("-c")
 
         try:
-            # Run in isolated session/process group so client disconnects NEVER send SIGHUP to agy
             process = subprocess.Popen(
                 cmd,
                 cwd=cwd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
                 start_new_session=True
@@ -240,10 +515,19 @@ def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progre
 
             final_response = ""
             last_update_time = 0
-            current_activities = []
+            current_activity = "lagi mikir..."
             turn_usage = {}
+            generated_files = []
+            step_counter = 0
+
+            start_time = time.time()
+            max_duration = 600  # 10 minutes timeout watchdog
 
             for line in iter(process.stdout.readline, ''):
+                if time.time() - start_time > max_duration:
+                    process.kill()
+                    return "eksekusi dibatalkan: kelamaan yaa 10 menit 😅", {}, []
+
                 line = line.strip()
                 if not line:
                     continue
@@ -256,37 +540,62 @@ def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progre
                         conv_id = data.get("conversation_id")
                         if conv_id:
                             active_conversations[chat_id] = conv_id
-                            save_active_conversations()
+                            save_persistent_sessions()
 
                     elif event_type == "step_update":
                         step = data.get("step_update", {})
                         step_type = step.get("step_type", "")
+                        step_counter += 1
                         
                         if step.get("usage"):
                             turn_usage = step.get("usage")
 
+                        if step_type == "agent_response":
+                            delta = step.get("text_delta") or step.get("response") or step.get("text")
+                            if delta:
+                                final_response += delta
+
                         tool_call = step.get("tool_call") or step.get("tool") or {}
                         tool_name = tool_call.get("name", step_type)
                         args = tool_call.get("args", {})
+
+                        if tool_name in ["write_to_file", "generate_image", "multi_replace_file_content"]:
+                            target = args.get("TargetFile") or args.get("ImageName")
+                            if target and os.path.exists(target):
+                                generated_files.append(target)
                         
-                        action = args.get("toolAction") or args.get("toolSummary")
-                        if action:
-                            current_activities.append(f"• 🛠️ {action}")
-                        elif tool_name and tool_name not in ["unknown", "user_input", "checkpoint"]:
-                            current_activities.append(f"• ⚡ Processing step: <code>{tool_name}</code>")
+                        # Build simple, human-like activity status
+                        raw_action = args.get("toolAction") or args.get("toolSummary")
+                        target_file = args.get("TargetFile") or args.get("AbsolutePath") or args.get("SearchPath")
+                        fname = os.path.basename(target_file) if target_file else ""
+
+                        if tool_name == "view_file":
+                            current_activity = f"baca {fname}" if fname else "lagi baca file..."
+                        elif tool_name in ["replace_file_content", "multi_replace_file_content", "write_to_file"]:
+                            current_activity = f"mengedit {fname}" if fname else "lagi nulis perubahan..."
+                        elif tool_name in ["grep_search", "find_files"]:
+                            query = args.get("Query", "")
+                            current_activity = f"mencari {query}" if query else "lagi nyari..."
+                        elif tool_name == "run_command":
+                            current_activity = "menjalankan perintah..."
+                        elif raw_action:
+                            current_activity = raw_action.lower()
+                        else:
+                            current_activity = "lagi nyusun jawaban..."
 
                         now = time.time()
-                        if progress_callback and (now - last_update_time >= 1.5) and current_activities:
-                            recent_logs = "\n".join(current_activities[-5:])
+                        if progress_callback and (now - last_update_time >= 1.2):
                             try:
-                                progress_callback(f"⚡ <b>Antigravity AI sedang bekerja...</b>\n\n🔄 <b>Aktivitas Real-Time:</b>\n{recent_logs}")
+                                progress_callback(f"<i>{current_activity}</i>")
                             except Exception:
                                 pass
                             last_update_time = now
 
                     elif event_type == "result":
                         res = data.get("result", {})
-                        final_response = res.get("response", "")
+                        res_text = res.get("response", "")
+                        if res_text:
+                            final_response = res_text
                         if res.get("usage"):
                             turn_usage = res.get("usage")
 
@@ -295,10 +604,11 @@ def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progre
 
             process.stdout.close()
             process.wait()
+            active_processes.pop(chat_id, None)
 
             if not active_conversations.get(chat_id):
                 active_conversations[chat_id] = True
-                save_active_conversations()
+                save_persistent_sessions()
 
             usage_stats = get_token_usage(chat_id)
             if turn_usage and turn_usage.get("total_tokens"):
@@ -306,14 +616,16 @@ def run_antigravity_stream(prompt: str, chat_id: int, workspace_dir: str, progre
                 usage_stats['session_tokens'] += t_tok
                 usage_stats['total_tokens'] += t_tok
 
-            resp_text = final_response if final_response else "✅ Tugas selesai."
-            return resp_text, turn_usage
+            resp_text = final_response.strip() if final_response and final_response.strip() else "iyaa, ada yang bisa aku bantu lagi kahh? eheyy"
+            return resp_text, turn_usage, generated_files
+
 
         except Exception as e:
-            return f"❌ <b>Gagal menjalankan Antigravity:</b> {str(e)}", {}
+            active_processes.pop(chat_id, None)
+            return f"❌ <b>Gagal menjalankan Antigravity:</b> {str(e)}", {}, []
 
 
-def run_smash_stream(prompt: str, chat_id: int, workspace_dir: str, progress_callback=None) -> tuple:
+def run_smash_stream(prompt: str, chat_id: int, workspace_dir: str = None, progress_callback=None) -> tuple:
     smash_prompt = (
         "💥 SMASH MODE INSTRUCTION: Complete the following task with maximum effort, thoroughness, and speed. "
         "Fix all bugs, resolve any broken code/tests, build the project, and do not stop until everything runs 100% cleanly:\n\n"
@@ -322,18 +634,21 @@ def run_smash_stream(prompt: str, chat_id: int, workspace_dir: str, progress_cal
     return run_antigravity_stream(smash_prompt, chat_id, workspace_dir, progress_callback)
 
 
-def resume_stream(prompt: str, chat_id: int, workspace_dir: str, progress_callback=None) -> tuple:
+def resume_stream(prompt: str, chat_id: int, workspace_dir: str = None, progress_callback=None) -> tuple:
     resume_prompt = prompt if prompt else "Lanjutkan pekerjaan dan konteks dari poin terakhir yang belum selesai."
     return run_antigravity_stream(resume_prompt, chat_id, workspace_dir, progress_callback)
 
 
 def set_active_session(chat_id: int, conv_id: str):
     active_conversations[chat_id] = conv_id
-    save_active_conversations()
-    get_token_usage(chat_id)['session_tokens'] = 0
+    save_persistent_sessions()
+    if chat_id not in chat_token_usage:
+        chat_token_usage[chat_id] = {'session_tokens': 0, 'total_tokens': 0}
+    chat_token_usage[chat_id]['session_tokens'] = calculate_session_tokens(conv_id)
 
 
 def reset_session(chat_id: int):
     active_conversations.pop(chat_id, None)
-    save_active_conversations()
-    get_token_usage(chat_id)['session_tokens'] = 0
+    save_persistent_sessions()
+    if chat_id in chat_token_usage:
+        chat_token_usage[chat_id]['session_tokens'] = 0

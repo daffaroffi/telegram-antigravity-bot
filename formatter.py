@@ -79,3 +79,20 @@ def markdown_to_telegram_html(text: str) -> str:
         text = text.replace(f"___CODE_BLOCK_{idx}___", block_html)
 
     return text
+
+
+def format_response_header(model: str, effort: str, workspace: str) -> str:
+    """Returns empty string so no branding header is added"""
+    return ""
+
+
+def format_error_card(error_msg: str, suggestion: str = None) -> str:
+    """Builds a friendly casual error message"""
+    clean_err = html.escape(error_msg)
+    sug_text = f"\n\n💡 {suggestion}" if suggestion else ""
+    return (
+        f"waduh ada masalah nih eheyy 😅\n"
+        f"<code>{clean_err}</code>"
+        f"{sug_text}"
+    )
+
