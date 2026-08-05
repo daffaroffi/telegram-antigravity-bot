@@ -22,8 +22,8 @@ Control your Linux server, coding execution, bug fixes, and development workflow
 
 1. **Clone Repository**:
    `ash
-   git clone https://github.com/daffaroffi/antigravity-telegram-bot.git
-   cd antigravity-telegram-bot
+   git clone https://github.com/daffaroffi/telegram-antigravity-bot.git
+   cd telegram-antigravity-bot
    `
 
 2. **Configure Environment Variables**:
