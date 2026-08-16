@@ -54,3 +54,9 @@ Kendalikan server Linux, eksekusi kode, perbaikan bug, dan alur kerja pengembang
 ---
 
 ***REMOVED***
+
+---
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

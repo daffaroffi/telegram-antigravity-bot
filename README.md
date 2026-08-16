@@ -54,3 +54,9 @@ Control your Linux server, coding execution, bug fixes, and development workflow
 ---
 
 ***REMOVED***
+
+---
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
